@@ -14,6 +14,10 @@
 #include "../os/error.h"
 
 #include "gui.h"
+#ifdef __3DS__
+#include "gui_3ds.h"
+#include "../unit_3ds.h"
+#endif
 
 #include "font.h"
 #include "mentat.h"
@@ -118,10 +122,12 @@ bool g_doQuitHOF;
 static uint8 s_strategicMapArrowColors[24];
 static bool s_strategicMapFastForward;
 
+#ifndef __3DS__
 static uint16 s_mouseSpriteLeft;
 static uint16 s_mouseSpriteTop;
 static uint16 s_mouseSpriteWidth;
 static uint16 s_mouseSpriteHeight;
+#endif
 
 uint16 g_mouseSpriteHotspotX;
 uint16 g_mouseSpriteHotspotY;
@@ -791,6 +797,10 @@ uint16 GUI_DisplayModalMessage(const char *str, unsigned int spriteID, ...)
 
 	GUI_Mouse_Hide_Safe();
 
+#ifdef __3DS__
+	GUI_3DS_BeginMessage(textBuffer);
+#endif
+
 	oldScreenID = GFX_Screen_SetActive(SCREEN_0);
 
 	GUI_DrawText_Wrapper(NULL, 0, 0, 0, 0, 0x22);
@@ -862,6 +872,11 @@ uint16 GUI_DisplayModalMessage(const char *str, unsigned int spriteID, ...)
 	GFX_Screen_SetActive(oldScreenID);
 
 	GUI_Mouse_Show_Safe();
+
+#ifdef __3DS__
+	GUI_3DS_EndMessage();
+#endif
+	g_viewport_forceRedraw = true;
 
 	return ret;
 }
@@ -960,7 +975,7 @@ void GUI_DrawSprite(Screen screenID, const uint8 *sprite, int16 posX, int16 posY
 	int16  distX;
 	const uint8 *palette = NULL;
 	uint16 spriteDecodedLength; /* if encoded with Format80 */
-	uint8 spriteBuffer[20000];	/* for sprites encoded with Format80 : maximum size for credits images is 19841, elsewere it is 3456 */
+	static uint8 spriteBuffer[20000];	/* for sprites encoded with Format80 : maximum size for credits images is 19841, elsewere it is 3456 */
 
 	uint8 *buf = NULL;
 	uint8 *b = NULL;
@@ -1624,6 +1639,9 @@ static void GUI_EndStats_Sleep(uint16 delay)
  */
 void GUI_EndStats_Show(uint16 killedAllied, uint16 killedEnemy, uint16 destroyedAllied, uint16 destroyedEnemy, uint16 harvestedAllied, uint16 harvestedEnemy, int16 score, uint8 houseID)
 {
+#ifdef __3DS__
+ bool previousResults=GUI_3DS_SetResultsActive(true);
+#endif
 	Screen oldScreenID;
 	uint16 statsBoxCount;
 	uint16 textLeft;	/* text left position */
@@ -1758,6 +1776,9 @@ void GUI_EndStats_Show(uint16 killedAllied, uint16 killedEnemy, uint16 destroyed
 	GFX_Screen_SetActive(oldScreenID);
 
 	Driver_Music_FadeOut();
+#ifdef __3DS__
+ GUI_3DS_SetResultsActive(previousResults);
+#endif
 }
 
 /**
@@ -1811,9 +1832,17 @@ uint8 GUI_PickHouse(void)
 		GUI_SetPaletteAnimated(g_palette1, 15);
 		GUI_Mouse_Show_Safe();
 
+#ifdef __3DS__
+		g_3dsHousePickerActive = true;
+#endif
 		for (houseID = HOUSE_INVALID; houseID == HOUSE_INVALID; sleepIdle()) {
 			uint16 key = GUI_Widget_HandleEvents(w);
 
+#ifdef __3DS__
+			if (g_3dsHouseBack) break; /* B: back to the title menu */
+			/* A/touch queue a widget result; desktop Enter confirms the current row. */
+			key = GUI_3DS_HouseEvent(key);
+#endif
 			GUI_PaletteAnimate();
 
 			if ((key & 0x800) != 0) key = 0;
@@ -1826,6 +1855,18 @@ uint8 GUI_PickHouse(void)
 			}
 		}
 
+#ifdef __3DS__
+		if (houseID == HOUSE_INVALID) {
+			g_3dsHouseBack = false;
+			g_3dsHousePickerActive = false;
+			while (w != NULL) { Widget *next = w->next; free(w); w = next; }
+			GUI_Mouse_Hide_Safe();
+			Input_History_Clear();
+			return HOUSE_INVALID;
+		}
+		/* Lock house focus and mark house as confirmed so screens don't flash back to HERALD.CPS! */
+		GUI_3DS_SetHouseConfirm(houseID);
+#endif
 		GUI_Mouse_Hide_Safe();
 
 		if (g_enableVoices != 0) {
@@ -1833,6 +1874,11 @@ uint8 GUI_PickHouse(void)
 
 			while (Sound_StartSpeech()) sleepIdle();
 		}
+
+#ifdef __3DS__
+		g_3dsHousePickerActive = false;
+		GFX_ClearBlock(SCREEN_0);
+#endif
 
 		while (w != NULL) {
 			Widget *next = w->next;
@@ -1861,6 +1907,9 @@ uint8 GUI_PickHouse(void)
 		strncpy(g_readBuffer, String_Get_ByIndex(STR_HOUSE_HARKONNENFROM_THE_DARK_WORLD_OF_GIEDI_PRIME_THE_SAVAGE_HOUSE_HARKONNEN_HAS_SPREAD_ACROSS_THE_UNIVERSE_A_CRUEL_PEOPLE_THE_HARKONNEN_ARE_RUTHLESS_TOWARDS_BOTH_FRIEND_AND_FOE_IN_THEIR_FANATICAL_PURSUIT_OF_POWER + houseID * 40), g_readBufferSize);
 		GUI_Mentat_Show(g_readBuffer, House_GetWSAHouseFilename(houseID), NULL);
 
+#ifdef __3DS__
+		GUI_3DS_SetMentatButtons(w);
+#else
 		if (File_Exists("MISC.CPS")) Sprites_LoadImage("MISC.CPS", SCREEN_1, g_palette1);
 		else Sprites_LoadImage(String_GenerateFilename("MISC"), SCREEN_1, g_palette1);
 
@@ -1873,12 +1922,17 @@ uint8 GUI_PickHouse(void)
 		GUI_Widget_DrawAll(w);
 
 		GUI_Mouse_Show_Safe();
+#endif
 
 		for (;; sleepIdle()) {
 			yes_no = GUI_Mentat_Loop(House_GetWSAHouseFilename(houseID), NULL, NULL, true, w);
 
 			if ((yes_no & 0x8000) != 0) break;
 		}
+#ifdef __3DS__
+		GUI_3DS_SetHouseConfirm(HOUSE_INVALID);
+		GUI_3DS_SetMentatButtons(NULL);
+#endif
 
 		if (yes_no == 0x8001) {
 			Driver_Music_FadeOut();
@@ -2270,6 +2324,11 @@ void GUI_ChangeSelectionType(uint16 selectionType)
 	if (selectionType == SELECTIONTYPE_STRUCTURE && g_unitSelected != NULL) {
 		g_unitSelected = NULL;
 	}
+#ifdef __3DS__
+	if ((selectionType == SELECTIONTYPE_STRUCTURE || selectionType == SELECTIONTYPE_PLACE) && g_selectedUnitsCount > 0) {
+		Unit_3DS_DeselectUnits();
+	}
+#endif
 
 	oldScreenID = GFX_Screen_SetActive(SCREEN_1);
 
@@ -2891,6 +2950,9 @@ FactoryResult GUI_DisplayFactoryWindow(bool isConstructionYard, bool isStarPort,
 
 	GUI_FactoryWindow_UpdateSelection(true);
 
+#ifdef __3DS__
+	GUI_3DS_FactoryBegin();
+#endif
 	for (g_factoryWindowResult = FACTORY_CONTINUE; g_factoryWindowResult == FACTORY_CONTINUE; sleepIdle()) {
 		uint16 event;
 
@@ -2898,6 +2960,9 @@ FactoryResult GUI_DisplayFactoryWindow(bool isConstructionYard, bool isStarPort,
 
 		GUI_FactoryWindow_UpdateSelection(false);
 
+#ifdef __3DS__
+		GUI_3DS_FactoryEvents();
+#endif
 		event = GUI_Widget_HandleEvents(g_widgetInvoiceTail);
 
 		if (event == 0x6E) GUI_Production_ResumeGame_Click(NULL);
@@ -2910,6 +2975,8 @@ FactoryResult GUI_DisplayFactoryWindow(bool isConstructionYard, bool isStarPort,
 	GFX_Screen_SetActive(oldScreenID);
 
 	GUI_FactoryWindow_B495_0F30();
+	g_widgetInvoiceTail = NULL;
+	g_viewport_forceRedraw = true;
 
 	memcpy(g_palette1 + 255 * 3, backup, 3);
 
@@ -3236,7 +3303,7 @@ static void GUI_StrategicMap_ReadHouseRegions(uint8 houseID, uint16 campaignID)
 
 static void GUI_StrategicMap_DrawRegion(uint8 houseId, uint16 region, bool progressive)
 {
-	char key[4];
+	char key[6];
 	char buffer[81];
 	int16 x;
 	int16 y;
@@ -3279,7 +3346,7 @@ static void GUI_StrategicMap_PrepareRegions(uint16 campaignID)
 static void GUI_StrategicMap_ShowProgression(uint16 campaignID)
 {
 	char key[10];
-	char category[10];
+	char category[11];
 	char buf[100];
 	uint16 i;
 
@@ -3765,7 +3832,9 @@ void GUI_Screen_FadeIn(uint16 xSrc, uint16 ySrc, uint16 xDst, uint16 yDst, uint1
 		}
 
 		/* XXX -- This delays the system so you can in fact see the animation */
-		if ((y % 4) == 0) Timer_Sleep(1);
+		if ((y % 4) == 0) {
+			Timer_Sleep(1);
+		}
 	}
 
 	if (screenDst == SCREEN_0) {
@@ -3900,6 +3969,9 @@ void GUI_Screen_FadeIn2(int16 x, int16 y, int16 width, int16 height, Screen scre
  */
 void GUI_Mouse_Show(void)
 {
+#ifdef __3DS__
+	return;
+#else
 	int left, top;
 
 	if (g_mouseDisabled == 1) return;
@@ -3922,6 +3994,7 @@ void GUI_Mouse_Show(void)
 	}
 
 	GUI_DrawSprite(SCREEN_0, g_mouseSprite, left, top, 0, 0);
+#endif
 }
 
 /**
@@ -3930,6 +4003,9 @@ void GUI_Mouse_Show(void)
  */
 void GUI_Mouse_Hide(void)
 {
+#ifdef __3DS__
+	return;
+#else
 	if (g_mouseDisabled == 1) return;
 
 	if (g_mouseHiddenDepth == 0 && s_mouseSpriteWidth != 0) {
@@ -3941,6 +4017,7 @@ void GUI_Mouse_Hide(void)
 	}
 
 	g_mouseHiddenDepth++;
+#endif
 }
 
 /**
@@ -4342,7 +4419,10 @@ void GUI_HallOfFame_Show(uint16 score)
 
 	GUI_HallOfFame_Decode(data);
 
-	GUI_HallOfFame_DrawBackground(score, true);
+	#ifdef __3DS__
+ bool previousResults=GUI_3DS_SetResultsActive(true);
+#endif
+ GUI_HallOfFame_DrawBackground(score, true);
 
 	if (score == 0xFFFF) {
 		editLine = 0;
@@ -4379,13 +4459,19 @@ void GUI_HallOfFame_Show(uint16 score)
 			Widget_SetAndPaintCurrentWidget(19);
 			GFX_Screen_SetActive(oldScreenID);
 
-			GUI_EditBox(name, 5, 19, NULL, &GUI_HallOfFame_Tick, false);
+			uint16 nameResult=GUI_EditBox(name, 5, 19, NULL, &GUI_HallOfFame_Tick, false);
+#ifdef __3DS__
+ if(nameResult==0x6E && !*name) memcpy(name,"Pilot",6);
+#else
+ VARIABLE_NOT_USED(nameResult);
+#endif
 
 			if (*name == '\0') continue;
 
 			nameEnd = name + strlen(name) - 1;
 
-			while (*nameEnd <= ' ' && nameEnd >= name) *nameEnd-- = '\0';
+			while (nameEnd > name && *nameEnd <= ' ') *nameEnd-- = '\0';
+            if (*nameEnd <= ' ') *nameEnd = '\0';
 		}
 
 		memcpy(&g_widgetProperties[19], &backupProperties, sizeof(WidgetProperties));
@@ -4402,6 +4488,9 @@ void GUI_HallOfFame_Show(uint16 score)
 	GUI_Mouse_Show_Safe();
 
 	w = GUI_HallOfFame_CreateButtons(data);
+#ifdef __3DS__
+ GUI_3DS_SetResultsButtons(w);
+#endif
 
 	Input_History_Clear();
 
@@ -4411,7 +4500,11 @@ void GUI_HallOfFame_Show(uint16 score)
 		GUI_Widget_HandleEvents(w);
 	}
 
-	GUI_HallOfFame_DeleteButtons(w);
+	#ifdef __3DS__
+ GUI_3DS_SetResultsButtons(NULL);
+ GUI_3DS_SetResultsActive(previousResults);
+#endif
+ GUI_HallOfFame_DeleteButtons(w);
 
 	Input_History_Clear();
 

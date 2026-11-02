@@ -13,6 +13,9 @@
 #include "../house.h"
 #include "../opendune.h"
 #include "../unit.h"
+#ifdef __3DS__
+#include "../unit_3ds.h"
+#endif
 
 
 static struct Unit g_unitArray[UNIT_INDEX_MAX];
@@ -63,6 +66,9 @@ Unit *Unit_Find(PoolFindStruct *find)
  */
 void Unit_Init(void)
 {
+#ifdef __3DS__
+	Unit_3DS_Init();
+#endif
 	memset(g_unitArray, 0, sizeof(g_unitArray));
 	memset(g_unitFindArray, 0, sizeof(g_unitFindArray));
 	g_unitFindCount = 0;
@@ -161,6 +167,9 @@ Unit *Unit_Allocate(uint16 index, uint8 type, uint8 houseID)
 void Unit_Free(Unit *u)
 {
 	int i;
+#ifdef __3DS__
+	Unit_3DS_ForgetUnit(u);
+#endif
 
 	memset(&u->o.flags, 0, sizeof(u->o.flags));
 

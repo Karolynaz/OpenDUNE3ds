@@ -3,7 +3,7 @@
 #ifndef OS_ENDIAN_H
 #define OS_ENDIAN_H
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__3DS__) || defined(__arm__)
 	#if !defined(__LITTLE_ENDIAN)
 		#define __LITTLE_ENDIAN 1234
 	#endif /* __LITTLE_ENDIAN */

@@ -18,6 +18,8 @@
 	#include <time.h>
 #elif defined(__HAIKU__)
 	#include <OS.h>
+#elif defined(__3DS__)
+	#include <3ds.h>
 #else
 	/* Linux / Mac OS X / etc. */
 	#if !defined(__USE_POSIX)
@@ -61,7 +63,9 @@ static int s_timerNodeSize  = 0;
 
 static uint32 s_timerLastTime;
 
+#if !defined(__3DS__)
 static const uint32 s_timerSpeed = 1000000 / 120; /* Our timer runs at 120Hz */
+#endif
 
 
 uint32 Timer_GetTime(void)
@@ -75,6 +79,8 @@ uint32 Timer_GetTime(void)
 	return get_sysvar(_hz_200) * 5;
 #elif defined(__WATCOMC__)
 	return clock() * 1000 / CLOCKS_PER_SEC;
+#elif defined(__3DS__)
+	return (uint32)((svcGetSystemTick() * 1000ULL) / SYSCLOCK_ARM11);
 #else
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
@@ -96,10 +102,22 @@ static void Timer_InterruptRun(int arg)
 	if (timerLock) return;
 	timerLock = true;
 
+#if defined(__3DS__)
+	static u64 s_timerLastTick3DS = 0;
+	u64 nowTick = svcGetSystemTick();
+	if (s_timerLastTick3DS == 0) s_timerLastTick3DS = nowTick;
+	u64 tickDelta = nowTick - s_timerLastTick3DS;
+	s_timerLastTick3DS = nowTick;
+	usec_delta = (uint32)((tickDelta * 1000000ULL) / SYSCLOCK_ARM11);
+	if (usec_delta > 50000) usec_delta = 50000;
+	new_time = (uint32)((nowTick * 1000ULL) / SYSCLOCK_ARM11);
+	s_timerLastTime = new_time;
+#else
 	/* Calculate the time between calls */
 	new_time   = Timer_GetTime();
 	usec_delta = (new_time - s_timerLastTime) * 1000;
 	s_timerLastTime = new_time;
+#endif
 
 	/* Walk all our timers, see which (and how often) it should be triggered */
 	node = s_timerNodes;
@@ -116,8 +134,14 @@ static void Timer_InterruptRun(int arg)
 			if (node->usec_left <= delta) {
 				delta -= node->usec_left;
 				node->usec_left = node->usec_delay;
-				if(arg == 0) node->callback();
 				while (node->usec_left <= delta) delta -= node->usec_left;
+				node->usec_left -= delta;
+				if (arg == 0) {
+					timerLock = false;
+					node->callback();
+					timerLock = true;
+				}
+				continue;
 			}
 		} else while (node->usec_left <= delta) {
 			delta -= node->usec_left;
@@ -154,6 +178,15 @@ void SleepAndProcessBackgroundTasks(void)
 	} while (system_time() - s_nextTrigger > 0);
 }
 
+#elif defined(__3DS__)
+extern void midi_3ds_pump(void);
+
+void SleepAndProcessBackgroundTasks(void)
+{
+	Timer_InterruptRun(0);
+	midi_3ds_pump();
+	svcSleepThread(500000);
+}
 #elif !defined(_WIN32) || defined(WITH_SDL) || defined(WITH_SDL2)
 #if defined(_WIN32)
 static volatile int s_timer_count = 0;
@@ -212,14 +245,16 @@ void CALLBACK Timer_InterruptWindows(LPVOID arg, BOOLEAN TimerOrWaitFired) {
 }
 #endif /* _WIN32 */
 
-#if !defined(TOS) && !defined(DOS) && !defined(__HAIKU__)
+#if !defined(TOS) && !defined(DOS) && !defined(__HAIKU__) && !defined(__3DS__)
 
 /**
  * Suspend the timer interrupt handling.
  */
 static void Timer_InterruptSuspend(void)
 {
-#if defined(_WIN32)
+#if defined(__3DS__)
+	/* No-op on 3DS */
+#elif defined(_WIN32)
 	if (s_timerThread != NULL) DeleteTimerQueueTimer(NULL, s_timerThread, NULL);
 	s_timerThread = NULL;
 #else
@@ -237,7 +272,9 @@ static void Timer_InterruptSuspend(void)
  */
 static void Timer_InterruptResume(void)
 {
-#if defined(_WIN32)
+#if defined(__3DS__)
+	/* No-op on 3DS */
+#elif defined(_WIN32)
 	int timerTime = s_timerSpeed / 1000;
 	CreateTimerQueueTimer(&s_timerThread, NULL, Timer_InterruptWindows, NULL, timerTime, timerTime, WT_EXECUTEINTIMERTHREAD);
 #else
@@ -268,8 +305,8 @@ void Timer_Init(void)
 #if 0
 	Xbtimer(0/* Timer A */, 1/* divider = 4 */, s_timerSpeed * 6144 / 10000, Timer_Handler);
 #endif
-#elif defined(DOS) || defined(__HAIKU__)
-	/* */
+#elif defined(DOS) || defined(__HAIKU__) || defined(__3DS__)
+	/* Handled via vblank in SleepAndProcessBackgroundTasks */
 #else
 	{
 		struct sigaction timerSignal;
@@ -280,7 +317,7 @@ void Timer_Init(void)
 		sigaction(SIGALRM, &timerSignal, NULL);
 	}
 #endif /* _WIN32 */
-#if !defined(TOS) && !defined(DOS) && !defined(__HAIKU__)
+#if !defined(TOS) && !defined(DOS) && !defined(__HAIKU__) && !defined(__3DS__)
 	Timer_InterruptResume();
 #endif /* !defined(TOS) && !defined(DOS) */
 }
@@ -290,7 +327,7 @@ void Timer_Init(void)
  */
 void Timer_Uninit(void)
 {
-#if !defined(TOS) && !defined(DOS) && !defined(__HAIKU__)
+#if !defined(TOS) && !defined(DOS) && !defined(__HAIKU__) && !defined(__3DS__)
 	Timer_InterruptSuspend();
 #endif /* !defined(TOS) && !defined(DOS) */
 #if defined(_WIN32)
@@ -399,5 +436,7 @@ bool Timer_SetTimer(TimerType timer, bool set)
 void Timer_Sleep(uint16 ticks)
 {
 	uint32 tick = g_timerSleep + ticks;
-	while (tick >= g_timerSleep) sleepIdle();
+	while (tick >= g_timerSleep) {
+		sleepIdle();
+	}
 }

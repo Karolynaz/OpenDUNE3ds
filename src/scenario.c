@@ -503,6 +503,7 @@ static void Scenario_Load_MapParts(const char *key, void (*ptr)(uint16 packed, T
 
 static void Scenario_Load_Chunk(const char *category, void (*ptr)(const char *key, char *settings))
 {
+	ReadBuffer_EnsureAllocated();
 	char *buffer = g_readBuffer;
 
 	Ini_GetString(category, NULL, NULL, g_readBuffer, g_readBufferSize, s_scenarioBuffer);

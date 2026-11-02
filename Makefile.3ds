@@ -1,0 +1,163 @@
+# Nintendo 3DS Makefile for OpenDUNE
+
+DEVKITPRO ?= /Users/karolynaz/devkitpro
+DEVKITARM ?= $(DEVKITPRO)/devkitARM
+CTRULIB   ?= $(DEVKITPRO)/libctru
+
+CC        := $(DEVKITARM)/bin/arm-none-eabi-gcc
+CXX       := $(DEVKITARM)/bin/arm-none-eabi-g++
+3DSXTOOL  := $(DEVKITPRO)/tools/bin/3dsxtool
+SMDHTOOL  := $(DEVKITPRO)/tools/bin/smdhtool
+BANNERTOOL:= $(DEVKITPRO)/tools/bin/bannertool
+MAKEROM   := $(DEVKITPRO)/tools/bin/makerom
+
+TARGET    := OpenDUNE3DS
+.DEFAULT_GOAL := all
+BUILD_DIR := build
+
+ARCH      := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+CFLAGS    := $(ARCH) -specs=3dsx.specs -std=gnu11 -O2 -fno-strict-aliasing -Wall -MMD -MP \
+             -D__3DS__ -DARM11 \
+             -iquote include -iquote src \
+             -I$(CTRULIB)/include
+
+LDFLAGS   := $(ARCH) -specs=3dsx.specs -O2 \
+             -L$(CTRULIB)/lib -lctru -lm
+
+SRCS := \
+	src/animation.c \
+	src/audio/driver.c \
+	src/audio/dsp_3ds.c \
+	src/audio/midi_3ds.c \
+	src/audio/mt32mpu.c \
+	src/audio/sound.c \
+	src/codec/format40.c \
+	src/codec/format80.c \
+	src/config.c \
+	src/crashlog/crashlog.c \
+	src/crashlog/crashlog_none.c \
+	src/cutscene.c \
+	src/explosion.c \
+	src/file.c \
+	src/gfx.c \
+	src/gui/editbox.c \
+	src/gui/font.c \
+	src/gui/gui.c \
+	src/gui/gui_3ds.c \
+	src/gui/keyboard_3ds.c \
+	src/gui/mentat.c \
+	src/gui/security.c \
+	src/gui/viewport.c \
+	src/gui/widget.c \
+	src/gui/widget_click.c \
+	src/gui/widget_draw.c \
+	src/house.c \
+	src/ini.c \
+	src/inifile.c \
+	src/input/input.c \
+	src/input/input_3ds.c \
+	src/input/mouse.c \
+	src/load.c \
+	src/map.c \
+	src/object.c \
+	src/opendune.c \
+	src/os/endian.c \
+	src/os/error.c \
+	src/os/readdir.c \
+	src/pool/house.c \
+	src/pool/structure.c \
+	src/pool/team.c \
+	src/pool/unit.c \
+	src/rev.c \
+	src/save.c \
+	src/saveload/house.c \
+	src/saveload/info.c \
+	src/saveload/map.c \
+	src/saveload/object.c \
+	src/saveload/saveload.c \
+	src/saveload/scenario.c \
+	src/saveload/scriptengine.c \
+	src/saveload/structure.c \
+	src/saveload/team.c \
+	src/saveload/unit.c \
+	src/scenario.c \
+	src/script/general.c \
+	src/script/script.c \
+	src/script/structure.c \
+	src/script/team.c \
+	src/script/unit.c \
+	src/sprites.c \
+	src/string.c \
+	src/structure.c \
+	src/table/actioninfo.c \
+	src/table/animation.c \
+	src/table/explosion.c \
+	src/table/houseanimation.c \
+	src/table/houseinfo.c \
+	src/table/landscapeinfo.c \
+	src/table/movementtype.c \
+	src/table/selectiontype.c \
+	src/table/sound.c \
+	src/table/structureinfo.c \
+	src/table/teamaction.c \
+	src/table/tilediff.c \
+	src/table/unitinfo.c \
+	src/table/widget.c \
+	src/table/widgetinfo.c \
+	src/table/windowdesc.c \
+	src/team.c \
+	src/tile.c \
+	src/timer.c \
+	src/tools.c \
+	src/unit.c \
+	src/unit_3ds.c \
+	src/video/video_3ds.c \
+	src/video/video_fps.c \
+	src/wsa.c
+
+OBJS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRCS))
+
+-include $(OBJS:.o=.d)
+
+ROMFS_FLAG := $(if $(wildcard romfs/*),--romfs=romfs,)
+
+all: $(TARGET).3dsx $(TARGET).cia
+	@./scripts/package_build.sh
+
+$(BUILD_DIR)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/$(TARGET).elf: $(OBJS)
+	@echo "LINK $@"
+	@$(CC) $(OBJS) $(LDFLAGS) -o $@
+
+$(TARGET).smdh: os/png_icon/dune2_32x32.png
+	@mkdir -p $(BUILD_DIR)
+	@sips -z 48 48 os/png_icon/dune2_32x32.png --out $(BUILD_DIR)/icon_48.png > /dev/null
+	@$(SMDHTOOL) --create "Dune II" "Dune II Nintendo 3DS Port" "Karolynaz / OpenDUNE" $(BUILD_DIR)/icon_48.png $@
+
+$(TARGET).3dsx: $(BUILD_DIR)/$(TARGET).elf $(TARGET).smdh
+	@echo "3DSXTOOL $@"
+	@$(3DSXTOOL) $(BUILD_DIR)/$(TARGET).elf $@ --smdh=$(TARGET).smdh $(ROMFS_FLAG)
+
+$(BUILD_DIR)/banner.bin: os/png_icon/dune2_32x32.png
+	@mkdir -p $(BUILD_DIR)
+	@sips -z 128 256 os/png_icon/dune2_32x32.png --out $(BUILD_DIR)/banner_256x128.png > /dev/null
+	@python3 -c "import wave, struct; w = wave.open('$(BUILD_DIR)/silent.wav', 'w'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050); w.writeframes(struct.pack('<h', 0) * 2205); w.close()"
+	@$(BANNERTOOL) makebanner -i $(BUILD_DIR)/banner_256x128.png -a $(BUILD_DIR)/silent.wav -o $@
+
+$(BUILD_DIR)/icon.bin: os/png_icon/dune2_32x32.png
+	@mkdir -p $(BUILD_DIR)
+	@sips -z 48 48 os/png_icon/dune2_32x32.png --out $(BUILD_DIR)/icon_48.png > /dev/null
+	@$(BANNERTOOL) makesmdh -s "Dune II" -l "Dune II 3DS" -p "Karolynaz" -i $(BUILD_DIR)/icon_48.png -o $@
+
+$(TARGET).cia: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/banner.bin $(BUILD_DIR)/icon.bin template.rsf
+	@echo "MAKEROM $@"
+	@$(MAKEROM) -f cia -o $@ -elf $(BUILD_DIR)/$(TARGET).elf -rsf template.rsf -icon $(BUILD_DIR)/icon.bin -banner $(BUILD_DIR)/banner.bin
+
+clean:
+	@rm -rf $(BUILD_DIR) $(TARGET).3dsx $(TARGET).smdh $(TARGET).cia
+
+.PHONY: all clean

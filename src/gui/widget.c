@@ -17,6 +17,9 @@
 #include "../string.h"
 #include "../sprites.h"
 #include "../table/strings.h"
+#ifdef __3DS__
+#include "gui_3ds.h"
+#endif
 
 
 Widget *g_widgetLinkedListHead = NULL;
@@ -151,6 +154,10 @@ void GUI_Widget_Draw(Widget *w)
 
 	if (w == NULL) return;
 
+#ifdef __3DS__
+	if (GUI_3DS_IsMentatButton(w)) return;
+#endif
+
 	if (w->flags.invisible) {
 		if (!w->flags.greyWhenInvisible) return;
 
@@ -251,6 +258,13 @@ uint16 GUI_Widget_HandleEvents(Widget *w)
 	uint16 returnValue;
 	uint16 key;
 	bool fakeClick;
+
+#ifdef __3DS__
+	/* Physical/touch dialog confirmation must not synthesize a press and release
+	 * between two event polls; release-only widgets would miss the press. */
+	uint16 dialogEvent=GUI_3DS_TakeDialogEvent(w);
+	if(dialogEvent) { l_widget_selected=NULL; l_widget_last=NULL; return dialogEvent; }
+#endif
 
 	/* Get the key from the buffer, if there was any key pressed */
 	key = 0;

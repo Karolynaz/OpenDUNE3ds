@@ -1409,7 +1409,7 @@ static bool Structure_CheckAvailableConcrete(uint16 structureType, uint8 houseID
  *
  * @param s The Structure.
  */
-static void Structure_CancelBuild(Structure *s)
+void Structure_CancelBuild(Structure *s)
 {
 	ObjectInfo *oi;
 
@@ -1648,12 +1648,16 @@ bool Structure_BuildObject(Structure *s, uint16 objectType)
 		tile.x = 0xFFFF;
 		tile.y = 0xFFFF;
 
+		if (objectType >= UNIT_MAX) return false;
 		oi = &g_table_unitInfo[objectType].o;
-		o = &Unit_Create(UNIT_INDEX_INVALID, (uint8)objectType, s->o.houseID, tile, 0)->o;
+		Unit *created = Unit_Create(UNIT_INDEX_INVALID, (uint8)objectType, s->o.houseID, tile, 0);
+		o = created != NULL ? &created->o : NULL;
 		str = String_Get_ByIndex(g_table_unitInfo[objectType].o.stringID_full);
 	} else {
+		if (objectType >= STRUCTURE_MAX) return false;
 		oi = &g_table_structureInfo[objectType].o;
-		o = &Structure_Create(STRUCTURE_INDEX_INVALID, (uint8)objectType, s->o.houseID, 0xFFFF)->o;
+		Structure *created = Structure_Create(STRUCTURE_INDEX_INVALID, (uint8)objectType, s->o.houseID, 0xFFFF);
+		o = created != NULL ? &created->o : NULL;
 		str = String_Get_ByIndex(g_table_structureInfo[objectType].o.stringID_full);
 	}
 

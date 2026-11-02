@@ -43,6 +43,7 @@ extern int16 g_musicInBattle;
 
 extern void *g_readBuffer;
 extern uint32 g_readBufferSize;
+extern void ReadBuffer_EnsureAllocated(void);
 
 extern void Game_Prepare(void);
 extern void Game_Init(void);

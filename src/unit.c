@@ -33,6 +33,9 @@
 #include "tile.h"
 #include "timer.h"
 #include "tools.h"
+#ifdef __3DS__
+#include "unit_3ds.h"
+#endif
 
 
 static uint32 s_tickUnitMovement  = 0; /*!< Indicates next time the Movement function is executed. */
@@ -901,6 +904,9 @@ void Unit_Remove(Unit *u)
 	u->o.flags.s.allocated = true;
 	Unit_UntargetMe(u);
 
+#ifdef __3DS__
+	Unit_3DS_ForgetUnit(u);
+#endif
 	if (u == g_unitSelected) Unit_Select(NULL);
 
 	u->o.flags.s.bulletIsBig = true;
@@ -1716,7 +1722,9 @@ void Unit_Select(Unit *unit)
 
 	if (unit == NULL) {
 		g_unitSelected = NULL;
-
+#ifdef __3DS__
+		Unit_3DS_DeselectUnits();
+#endif
 		GUI_ChangeSelectionType(SELECTIONTYPE_STRUCTURE);
 		return;
 	}
@@ -1746,6 +1754,12 @@ void Unit_Select(Unit *unit)
 	}
 
 	Unit_UpdateMap(2, g_unitSelected);
+
+#ifdef __3DS__
+	if (g_selectedUnitsCount <= 1) {
+		Unit_3DS_SelectSingle(g_unitSelected);
+	}
+#endif
 
 	Map_SetSelectionObjectPosition(0xFFFF);
 }
@@ -2444,6 +2458,9 @@ void Unit_RemovePlayer(Unit *unit)
 	if (!unit->o.flags.s.allocated) return;
 
 	unit->o.flags.s.allocated = false;
+#ifdef __3DS__
+	Unit_3DS_ForgetUnit(unit);
+#endif
 	Unit_RemoveFromTeam(unit);
 
 	if (unit != g_unitSelected) return;

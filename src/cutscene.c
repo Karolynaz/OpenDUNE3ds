@@ -11,6 +11,9 @@
 #include "os/strings.h"
 
 #include "cutscene.h"
+#ifdef __3DS__
+#include "gui/gui_3ds.h"
+#endif
 
 #include "audio/driver.h"
 #include "audio/sound.h"
@@ -53,7 +56,11 @@ static uint8                s_palettePartTarget[18];   /*!< Target palette part 
 static uint8                s_palettePartCurrent[18];  /*!< Current value of the palette part (6 colours, updated each call to #GameLoop_PalettePart_Update). */
 static uint8                s_palettePartChange[18];   /*!< Amount of change of each RGB colour of the palette part with each step. */
 
+#ifdef __3DS__
+bool g_canSkipIntro = true;  /*!< Always allow skipping intro/cutscenes with A on 3DS. */
+#else
 bool g_canSkipIntro = false; /*!< When true, you can skip the intro by pressing a key or clicking. */
+#endif
 
 static void GameLoop_PrepareAnimation(const HouseAnimation_Subtitle *subtitle, uint16 feedback_base_index, const HouseAnimation_SoundEffect *soundEffect)
 {
@@ -72,6 +79,9 @@ static void GameLoop_PrepareAnimation(const HouseAnimation_Subtitle *subtitle, u
 	s_subtitleIndex = 0;
 	s_subtitleWait = 0xFFFF;
 	s_subtitleActive = false;
+#ifdef __3DS__
+	GUI_3DS_SetSubtitle(NULL);
+#endif
 
 	s_palettePartDirection    = PPD_STOPPED;
 	s_palettePartCount        = 0;
@@ -104,6 +114,9 @@ static void GameLoop_PrepareAnimation(const HouseAnimation_Subtitle *subtitle, u
 
 static void GameLoop_FinishAnimation(void)
 {
+#ifdef __3DS__
+	GUI_3DS_SetSubtitle(NULL);
+#endif
 	GUI_DrawText_Wrapper(NULL, 0, 0, 0, 0, 0x1);
 	GUI_DrawText_Wrapper(NULL, 0, 0, 0, 0, 0x2);
 
@@ -181,6 +194,9 @@ static void GameLoop_PlaySubtitle(uint8 animation)
 		if (s_subtitleWait-- != 0) return;
 
 		s_subtitleActive = false;
+#ifdef __3DS__
+		GUI_3DS_SetSubtitle(NULL);
+#endif
 		s_houseAnimation_currentSubtitle++;
 		s_palettePartDirection = PPD_TO_BLACK;
 
@@ -209,6 +225,19 @@ static void GameLoop_PlaySubtitle(uint8 animation)
 
 	GUI_DrawFilledRectangle(0, subtitle->top == 85 ? 0 : subtitle->top, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1, 0);
 
+#ifdef __3DS__
+	if (subtitle->stringID != STR_NULL) {
+		if (s_houseAnimation_currentSubtitle == 0 && subtitle->top == 85) {
+			GameLoop_DrawText(String_Get_ByIndex(subtitle->stringID), subtitle->top);
+		} else {
+			GUI_3DS_SetSubtitle(String_Get_ByIndex(subtitle->stringID));
+		}
+	}
+	if (g_enableVoices != 0 && s_feedback_base_index != 0xFFFF && s_houseAnimation_currentSubtitle != 0 && g_config.language == LANGUAGE_ENGLISH) {
+		uint16 feedback_index = s_feedback_base_index + s_houseAnimation_currentSubtitle;
+		Sound_Output_Feedback(feedback_index);
+	}
+#else
 	if (g_enableVoices != 0 && s_feedback_base_index != 0xFFFF && s_houseAnimation_currentSubtitle != 0 && g_config.language == LANGUAGE_ENGLISH) {
 		/* specific code for Intro
 		 * @see GameLoop_GameIntroAnimation() */
@@ -225,6 +254,7 @@ static void GameLoop_PlaySubtitle(uint8 animation)
 			GameLoop_DrawText(String_Get_ByIndex(subtitle->stringID), subtitle->top);
 		}
 	}
+#endif
 
 	s_palettePartDirection = PPD_TO_NEW_PALETTE;
 
@@ -450,6 +480,10 @@ static void GameLoop_PlayAnimation(const HouseAnimation_Animation *animation)
 			}
 
 			do {
+				if (Input_Keyboard_NextKey() != 0 && g_canSkipIntro) {
+					WSA_Unload(wsa);
+					return;
+				}
 				GameLoop_PalettePart_Update(false);
 				sleepIdle();
 			} while (g_timerTimeout != 0 && timeout > g_timerGUI);
@@ -458,10 +492,19 @@ static void GameLoop_PlayAnimation(const HouseAnimation_Animation *animation)
 		if (mode == 2) {
 			bool displayed;
 			do {
+				if (Input_Keyboard_NextKey() != 0 && g_canSkipIntro) {
+					WSA_Unload(wsa);
+					return;
+				}
 				GameLoop_PlaySubtitle(animationStep);
 				displayed = WSA_DisplayFrame(wsa, frame++, posX, posY, SCREEN_0);
 				sleepIdle();
 			} while (displayed);
+		}
+
+		if (Input_Keyboard_NextKey() != 0 && g_canSkipIntro) {
+			WSA_Unload(wsa);
+			return;
 		}
 
 		if ((animation->flags & HOUSEANIM_FLAGS_FADETOWHITE) != 0) {
@@ -487,7 +530,10 @@ static void GameLoop_PlayAnimation(const HouseAnimation_Animation *animation)
 		animationStep++;
 		animation++;
 
-		while (timeout2 > g_timerGUI) sleepIdle();
+		while (timeout2 > g_timerGUI) {
+			if (Input_Keyboard_NextKey() != 0 && g_canSkipIntro) return;
+			sleepIdle();
+		}
 	}
 }
 
@@ -949,6 +995,7 @@ void GameLoop_GameEndAnimation(void)
 	GameLoop_GameCredits();
 }
 
+#ifndef __3DS__
 /**
  * Logos at begin of intro.
  */
@@ -1026,6 +1073,258 @@ logos_exit:
 
 	GFX_Screen_SetActive(oldScreenID);
 }
+#endif
+
+#ifdef __3DS__
+typedef struct LaunchStar {
+	int16 x;
+	int16 y;
+	int8  speed;
+	uint8 color;
+} LaunchStar;
+
+static void LaunchStarfield_StepAndDraw(LaunchStar *topStars, int topCount, LaunchStar *botStars, int botCount, bool advance)
+{
+	memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
+	memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
+	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
+	memset(g_bottomScreenUIMask, 0, sizeof(g_bottomScreenUIMask));
+
+	for (int i = 0; i < topCount; i++) {
+		if (advance) {
+			topStars[i].x -= topStars[i].speed;
+			if (topStars[i].x < 0) topStars[i].x += TOP_WIDTH;
+		}
+		int x = topStars[i].x;
+		int y = topStars[i].y;
+		if (x >= 0 && x < TOP_WIDTH && y >= 0 && y < TOP_HEIGHT) {
+			g_topScreenBuffer[y * TOP_WIDTH + x] = topStars[i].color;
+			if (topStars[i].speed >= 5 && x + 1 < TOP_WIDTH) {
+				g_topScreenBuffer[y * TOP_WIDTH + x + 1] = 13;
+			}
+		}
+	}
+
+	for (int i = 0; i < botCount; i++) {
+		if (advance) {
+			botStars[i].x -= botStars[i].speed;
+			if (botStars[i].x < 0) botStars[i].x += BOTTOM_WIDTH;
+		}
+		int x = botStars[i].x;
+		int y = botStars[i].y;
+		if (x >= 0 && x < BOTTOM_WIDTH && y >= 0 && y < BOTTOM_HEIGHT) {
+			g_bottomScreenBuffer[y * BOTTOM_WIDTH + x] = botStars[i].color;
+			if (botStars[i].speed >= 5 && x + 1 < BOTTOM_WIDTH) {
+				g_bottomScreenBuffer[y * BOTTOM_WIDTH + x + 1] = 13;
+			}
+		}
+	}
+}
+
+void GameLoop_3DS_LaunchSequence(void)
+{
+	Screen oldScreenID = GFX_Screen_SetActive(SCREEN_0);
+	LaunchStar topStars[64];
+	LaunchStar botStars[48];
+	uint8 virginPal[256 * 3];
+	uint8 virginRemap[256];
+	uint8 *virginBuf = (uint8 *)calloc(1, 320 * 200);
+	uint8 *planetBuf = (uint8 *)calloc(1, 320 * 200);
+
+	for (int i = 0; i < 64; i++) {
+		topStars[i].x = (int16)((i * 97u + 23u) % TOP_WIDTH);
+		topStars[i].y = (int16)((i * 53u + 11u) % TOP_HEIGHT);
+		topStars[i].speed = (int8)(2 + (i % 4));
+		topStars[i].color = (i % 3 == 0) ? 15 : ((i % 3 == 1) ? 14 : 13);
+	}
+	for (int i = 0; i < 48; i++) {
+		botStars[i].x = (int16)((i * 89u + 17u) % BOTTOM_WIDTH);
+		botStars[i].y = (int16)((i * 47u + 7u) % BOTTOM_HEIGHT);
+		botStars[i].speed = (int8)(2 + (i % 4));
+		botStars[i].color = (i % 3 == 0) ? 15 : ((i % 3 == 1) ? 14 : 13);
+	}
+
+	Input_History_Clear();
+	GUI_ChangeSelectionType(SELECTIONTYPE_INTRO);
+	GUI_3DS_SetTitleActive(false);
+	GUI_3DS_SetLaunchActive(true);
+
+	/* Preload planet background for Stage 4 and Title Menu */
+	File_ReadBlockFile("IBM.PAL", g_palette1, 256 * 3);
+	if (planetBuf != NULL) {
+		if (File_Exists("BIGPLAN.CPS")) {
+			Sprites_LoadImage("BIGPLAN.CPS", SCREEN_1, NULL);
+		} else {
+			Sprites_LoadImage("PLANET.CPS", SCREEN_1, NULL);
+		}
+		memcpy(planetBuf, GFX_Screen_Get_ByIndex(SCREEN_1), 320 * 200);
+		GUI_3DS_SetPlanetBackground(planetBuf);
+	}
+
+	/* Stage 1: Stars flying from right to left across both screens */
+	GFX_SetPalette(g_palette1);
+	for (int f = 0; f < 45; f++) {
+		if (Input_Keyboard_NextKey() != 0) goto launch_finish;
+		LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+		Timer_Sleep(2);
+	}
+
+	/* Stage 2: Westwood logo on top screen & Virgin logo on bottom screen over flying stars */
+	File_ReadBlockFile("WESTWOOD.PAL", g_palette_998A, 256 * 3);
+	/* Ensure star colors 13, 14, 15 are bright grey/white in the combined logo palette */
+	g_palette_998A[13 * 3 + 0] = 28; g_palette_998A[13 * 3 + 1] = 28; g_palette_998A[13 * 3 + 2] = 34;
+	g_palette_998A[14 * 3 + 0] = 44; g_palette_998A[14 * 3 + 1] = 44; g_palette_998A[14 * 3 + 2] = 48;
+	g_palette_998A[15 * 3 + 0] = 63; g_palette_998A[15 * 3 + 1] = 63; g_palette_998A[15 * 3 + 2] = 63;
+
+	if (virginBuf != NULL && File_Exists("VIRGIN.CPS")) {
+		memset(virginPal, 0, sizeof(virginPal));
+		Sprites_LoadImage("VIRGIN.CPS", SCREEN_1, virginPal);
+		memset(virginRemap, 0, sizeof(virginRemap));
+		/* Remap Virgin's 31 colors into unused slots of WESTWOOD.PAL (112..136 and 140..145) */
+		for (int c = 1; c <= 31; c++) {
+			uint8 dstIdx = (c <= 25) ? (uint8)(111 + c) : (uint8)(140 + (c - 26));
+			virginRemap[c] = dstIdx;
+			g_palette_998A[dstIdx * 3 + 0] = virginPal[c * 3 + 0];
+			g_palette_998A[dstIdx * 3 + 1] = virginPal[c * 3 + 1];
+			g_palette_998A[dstIdx * 3 + 2] = virginPal[c * 3 + 2];
+		}
+		const uint8 *vSrc = (const uint8 *)GFX_Screen_Get_ByIndex(SCREEN_1);
+		for (int i = 0; i < 320 * 200; i++) {
+			uint8 px = vSrc[i];
+			virginBuf[i] = (px <= 31) ? virginRemap[px] : 0;
+		}
+	}
+
+	GFX_ClearScreen(SCREEN_0);
+	GFX_SetPalette(g_palette_998A);
+	Music_Play(0x24);
+
+	{
+		uint16 frame = 0;
+		void *wsa = WSA_LoadFile("WESTWOOD.WSA", GFX_Screen_Get_ByIndex(SCREEN_1),
+		                         GFX_Screen_GetSize_ByIndex(SCREEN_1) + GFX_Screen_GetSize_ByIndex(SCREEN_2) + GFX_Screen_GetSize_ByIndex(SCREEN_3), true);
+		const uint8 *wsaScreen = (const uint8 *)GFX_Screen_Get_ByIndex(SCREEN_0);
+
+		while (wsa != NULL && WSA_DisplayFrame(wsa, frame++, 0, 0, SCREEN_0)) {
+			for (int sub = 0; sub < 3; sub++) {
+				if (Input_Keyboard_NextKey() != 0) {
+					WSA_Unload(wsa);
+					goto launch_finish;
+				}
+				LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+				for (int y = 0; y < 112; y++) {
+					const uint8 *sRow = wsaScreen + y * 320;
+					uint8 *dRow = g_topScreenBuffer + (y + 64) * TOP_WIDTH + 40;
+					for (int x = 0; x < 320; x++) {
+						if (sRow[x] != 0) dRow[x] = sRow[x];
+					}
+				}
+				if (virginBuf != NULL) {
+					for (int y = 0; y < 200; y++) {
+						const uint8 *sRow = virginBuf + y * 320;
+						uint8 *dRow = g_bottomScreenBuffer + (y + 20) * BOTTOM_WIDTH;
+						for (int x = 0; x < 320; x++) {
+							if (sRow[x] != 0) dRow[x] = sRow[x];
+						}
+					}
+				}
+				Timer_Sleep(2);
+			}
+		}
+		if (wsa != NULL) WSA_Unload(wsa);
+
+		Voice_LoadVoices(0xFFFF);
+
+		for (int hold = 0; hold < 60; hold++) {
+			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
+			LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+			for (int y = 0; y < 112; y++) {
+				const uint8 *sRow = wsaScreen + y * 320;
+				uint8 *dRow = g_topScreenBuffer + (y + 64) * TOP_WIDTH + 40;
+				for (int x = 0; x < 320; x++) {
+					if (sRow[x] != 0) dRow[x] = sRow[x];
+				}
+			}
+			if (virginBuf != NULL) {
+				for (int y = 0; y < 200; y++) {
+					const uint8 *sRow = virginBuf + y * 320;
+					uint8 *dRow = g_bottomScreenBuffer + (y + 20) * BOTTOM_WIDTH;
+					for (int x = 0; x < 320; x++) {
+						if (sRow[x] != 0) dRow[x] = sRow[x];
+					}
+				}
+			}
+			Timer_Sleep(2);
+		}
+	}
+
+	/* Stage 3: "Presents" on top screen over flying starfield */
+	GFX_SetPalette(g_palette1);
+	Music_Play(28);
+	{
+		const char *presents = String_Get_ByIndex(STR_PRESENT);
+		if (presents == NULL || presents[0] == '\0') presents = "Presents";
+		for (int f = 0; f < 55; f++) {
+			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
+			LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+			GUI_3DS_DrawTitleTextTopCentered(110, presents, 147, 144);
+			Timer_Sleep(2);
+		}
+	}
+
+	/* Stage 4: Fly up to the planet on bottom screen while DUNE II letters descend on top screen */
+	if (File_Exists("TITLE.CPS")) Sprites_LoadImage("TITLE.CPS", SCREEN_1, NULL);
+	else Sprites_LoadImage(String_GenerateFilename("TITLE"), SCREEN_1, NULL);
+	{
+		const uint8 *titleArt = (const uint8 *)GFX_Screen_Get_ByIndex(SCREEN_1);
+		const int totalSteps = 80;
+		for (int step = 0; step <= totalSteps; step++) {
+			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
+			LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+
+			/* Planet approaches from right to center on the bottom screen */
+			int planetX = ((totalSteps - step) * BOTTOM_WIDTH) / totalSteps;
+			if (planetBuf != NULL) {
+				for (int y = 0; y < 200; y++) {
+					const uint8 *sRow = planetBuf + y * 320;
+					uint8 *dRow = g_bottomScreenBuffer + (y + 20) * BOTTOM_WIDTH;
+					for (int x = 0; x < 320; x++) {
+						int dx = planetX + x;
+						if (dx >= 0 && dx < BOTTOM_WIDTH && sRow[x] != 0) {
+							dRow[dx] = sRow[x];
+						}
+					}
+				}
+			}
+
+			/* DUNE II letters descend from the top of the top screen */
+			int logoOffsetY = -120 + (step * 140) / totalSteps; /* -120 .. +20 */
+			if (titleArt != NULL) {
+				for (int y = 0; y < 200; y++) {
+					int dy = logoOffsetY + y;
+					if (dy < 0 || dy >= TOP_HEIGHT) continue;
+					const uint8 *sRow = titleArt + y * 320;
+					uint8 *dRow = g_topScreenBuffer + dy * TOP_WIDTH + 40;
+					for (int x = 0; x < 320; x++) {
+						if (sRow[x] != 0) dRow[x] = sRow[x];
+					}
+				}
+			}
+
+			Timer_Sleep(2);
+		}
+	}
+
+launch_finish:
+	free(virginBuf);
+	free(planetBuf);
+	File_ReadBlockFile("IBM.PAL", g_palette1, 256 * 3);
+	GFX_SetPalette(g_palette1);
+	Input_History_Clear();
+	GUI_3DS_SetLaunchActive(false);
+	GFX_Screen_SetActive(oldScreenID);
+}
+#endif
 
 /**
  * The Intro.
@@ -1034,7 +1333,12 @@ void GameLoop_GameIntroAnimation(void)
 {
 	GUI_ChangeSelectionType(SELECTIONTYPE_INTRO);
 
+#ifndef __3DS__
 	Gameloop_Logos();
+#else
+	g_canSkipIntro = true;
+	Input_History_Clear();
+#endif
 
 	if (Input_Keyboard_NextKey() == 0 || !g_canSkipIntro) {
 		const HouseAnimation_Animation   *animation   = g_table_houseAnimation_animation[HOUSEANIMATION_INTRO];

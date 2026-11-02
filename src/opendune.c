@@ -58,6 +58,10 @@
 #include "pool/house.h"
 #include "pool/unit.h"
 #include "pool/structure.h"
+#ifdef __3DS__
+#include "unit_3ds.h"
+#include "gui/gui_3ds.h"
+#endif
 #include "pool/team.h"
 #include "scenario.h"
 #include "sprites.h"
@@ -97,6 +101,14 @@ bool   g_debugSkipDialogs = false; /*!< When non-zero, you immediately go to hou
 
 void *g_readBuffer = NULL;
 uint32 g_readBufferSize = 0;
+
+void ReadBuffer_EnsureAllocated(void)
+{
+	if (g_readBuffer == NULL) {
+		g_readBufferSize = (g_enableVoices == 0) ? 12000 : 28000;
+		g_readBuffer = calloc(1, g_readBufferSize);
+	}
+}
 
 static bool  s_debugForceWin = false; /*!< When true, you immediately win the level. */
 
@@ -281,12 +293,17 @@ static void GameLoop_LevelEnd(void)
 
 		Sound_Output_Feedback(0xFFFE);
 
+#ifndef __3DS__
 		GUI_ChangeSelectionType(SELECTIONTYPE_MENTAT);
+#endif
 
 		if (GameLoop_IsLevelWon()) {
 			Sound_Output_Feedback(40);
 
 			GUI_DisplayModalMessage(String_Get_ByIndex(STR_YOU_HAVE_SUCCESSFULLY_COMPLETED_YOUR_MISSION), 0xFFFF);
+#ifdef __3DS__
+            GUI_ChangeSelectionType(SELECTIONTYPE_MENTAT);
+#endif
 
 			GUI_Mentat_ShowWin();
 
@@ -326,6 +343,9 @@ static void GameLoop_LevelEnd(void)
 			Sound_Output_Feedback(41);
 
 			GUI_DisplayModalMessage(String_Get_ByIndex(STR_YOU_HAVE_FAILED_YOUR_MISSION), 0xFFFF);
+#ifdef __3DS__
+            GUI_ChangeSelectionType(SELECTIONTYPE_MENTAT);
+#endif
 
 			GUI_Mentat_ShowLose();
 
@@ -663,26 +683,48 @@ static void ReadProfileIni(const char *filename)
 	}
 }
 
+#ifdef __3DS__
+static bool s_resetMenu = false;
+
+void GameLoop_ResetMenu(void)
+{
+	s_resetMenu = true;
+}
+#endif
+
 /**
  * Intro menu.
  */
 static void GameLoop_GameIntroAnimationMenu(void)
 {
 	static const uint16 mainMenuStrings[][6] = {
-		{STR_PLAY_A_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL,         STR_NULL,         STR_NULL}, /* Neither HOF nor save. */
-		{STR_PLAY_A_GAME, STR_REPLAY_INTRODUCTION, STR_LOAD_GAME, STR_EXIT_GAME,    STR_NULL,         STR_NULL}, /* Has a save game. */
-		{STR_PLAY_A_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_HALL_OF_FAME, STR_NULL,         STR_NULL}, /* Has a HOF. */
-		{STR_PLAY_A_GAME, STR_REPLAY_INTRODUCTION, STR_LOAD_GAME, STR_EXIT_GAME,    STR_HALL_OF_FAME, STR_NULL}  /* Has a HOF and a save game. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL, STR_NULL}, /* Neither HOF nor save. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL, STR_NULL}, /* Has a save game. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_HALL_OF_FAME, STR_NULL}, /* Has a HOF. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_HALL_OF_FAME, STR_NULL}  /* Has a HOF and a save game. */
 	};
 
 	bool loadGame = false;
 	static bool drawMenu = true;
+#ifdef __3DS__
+	static uint16 stringID = 0xFFFF;
+	static bool s_launchDone = false;
+#else
 	static uint16 stringID = STR_REPLAY_INTRODUCTION;
+#endif
 	uint16 maxWidth;
 	static bool hasSave = false;
 	static bool hasFame = false;
 	static const char *strings[6];
 	static uint16 index = 0xFFFF;
+
+#ifdef __3DS__
+	if (s_resetMenu) {
+		s_resetMenu = false;
+		drawMenu = true;
+		stringID = 0xFFFF;
+	}
+#endif
 
 	if (index == 0xFFFF) {
 		hasSave = File_Exists_Personal("_save000.dat");
@@ -694,6 +736,19 @@ static void GameLoop_GameIntroAnimationMenu(void)
 		if (hasSave) g_canSkipIntro = true;
 	}
 
+#ifdef __3DS__
+	g_canSkipIntro = true;
+	if (!s_launchDone) {
+		s_launchDone = true;
+		if (!g_debugSkipDialogs) {
+			GameLoop_3DS_LaunchSequence();
+		}
+		Music_Play(28);
+		drawMenu = true;
+	}
+	/* Hide title choices while intro, load dialogs or scores own the screen. */
+	if (stringID != 0xFFFF) GUI_3DS_SetTitleActive(false);
+#endif
 	switch (stringID) {
 		case STR_REPLAY_INTRODUCTION:
 			Music_Play(0);
@@ -809,7 +864,9 @@ static void GameLoop_GameIntroAnimationMenu(void)
 
 		GUI_SetPaletteAnimated(g_palette1, 30);
 
+#ifndef __3DS__
 		GUI_DrawText_Wrapper("V1.07", 319, 192, 133, 0, 0x231, 0x39);
+#endif
 		GUI_DrawText_Wrapper(NULL, 0, 0, 0, 0, 0x22);
 
 		Widget_SetCurrentWidget(13);
@@ -817,6 +874,10 @@ static void GameLoop_GameIntroAnimationMenu(void)
 		GUI_Widget_DrawBorder(13, 2, 1);
 
 		GameLoop_DrawMenu(strings);
+#ifdef __3DS__
+		GUI_3DS_SetTitleLabels(strings);
+		GUI_3DS_SetTitleActive(true);
+#endif
 
 		GUI_Mouse_Show_Safe();
 
@@ -831,7 +892,37 @@ static void GameLoop_GameIntroAnimationMenu(void)
 
 	GUI_PaletteAnimate();
 
-	if (stringID == STR_PLAY_A_GAME) g_gameMode = GM_PICKHOUSE;
+	if (stringID == STR_PLAY_A_GAME) {
+#ifdef __3DS__
+		GUI_3DS_SetTitleActive(false);
+		if (!g_debugSkipDialogs) {
+			Music_Play(0);
+
+			free(g_readBuffer);
+			g_readBufferSize = (g_enableVoices == 0) ? 12000 : 28000;
+			g_readBuffer = calloc(1, g_readBufferSize);
+
+			GUI_Mouse_Hide_Safe();
+
+			Driver_Music_FadeOut();
+
+			GameLoop_GameIntroAnimation();
+
+			Sound_Output_Feedback(0xFFFE);
+
+			File_ReadBlockFile("IBM.PAL", g_palette1, 256 * 3);
+
+			Music_Play(0);
+
+			free(g_readBuffer);
+			g_readBufferSize = (g_enableVoices == 0) ? 12000 : 20000;
+			g_readBuffer = calloc(1, g_readBufferSize);
+
+			GUI_Mouse_Show_Safe();
+		}
+#endif
+		g_gameMode = GM_PICKHOUSE;
+	}
 }
 
 static void InGame_Numpad_Move(uint16 key)
@@ -939,12 +1030,9 @@ static void GameLoop_Main(void)
 	if (g_palette2) Warning("g_palette2\n");
 	else g_palette2 = calloc(1, 256 * 3);
 
-	g_readBufferSize = 12000;
-	g_readBuffer = calloc(1, g_readBufferSize);
+	ReadBuffer_EnsureAllocated();
 
 	ReadProfileIni("PROFILE.INI");
-
-	free(g_readBuffer); g_readBuffer = NULL;
 
 	File_ReadBlockFile("IBM.PAL", g_palette1, 256 * 3);
 
@@ -1017,6 +1105,14 @@ static void GameLoop_Main(void)
 
 			g_playerHouseID = HOUSE_MERCENARY;
 			g_playerHouseID = GUI_PickHouse();
+#ifdef __3DS__
+			if (g_playerHouseID == HOUSE_INVALID) { /* B on the house screen returns to the title menu. */
+				g_gameMode = GM_MENU;
+				GameLoop_ResetMenu();
+				GUI_Mouse_Show_Safe();
+				continue;
+			}
+#endif
 
 			GUI_Mouse_Hide_Safe();
 
@@ -1053,7 +1149,6 @@ static void GameLoop_Main(void)
 			}
 
 			g_gameMode = GM_NORMAL;
-
 			GUI_ChangeSelectionType(g_debugScenario ? SELECTIONTYPE_DEBUG : SELECTIONTYPE_STRUCTURE);
 
 			Music_Play(Tools_RandomLCG_Range(0, 8) + 8);
@@ -1085,6 +1180,27 @@ static void GameLoop_Main(void)
 				}
 			}
 		}
+
+#ifdef __3DS__
+		if (g_3dsRequestedOptions) {
+			g_3dsRequestedOptions = false;
+			GUI_Widget_Options_Click(NULL);
+		}
+		if (g_3dsRequestedMentat) {
+			g_3dsRequestedMentat = false;
+			GUI_Widget_Mentat_Click(NULL);
+		}
+		if (g_3dsRequestedOpenFactory != NULL) {
+			Structure *s = g_3dsRequestedOpenFactory;
+			g_3dsRequestedOpenFactory = NULL;
+			if (s->o.flags.s.allocated && s->o.houseID == g_playerHouseID && s->o.type < STRUCTURE_MAX && g_table_structureInfo[s->o.type].o.flags.factory) Structure_BuildObject(s, 0xFFFF);
+		}
+		if (g_3dsRequestedStartPlacement != NULL) {
+			Structure *s = g_3dsRequestedStartPlacement;
+			g_3dsRequestedStartPlacement = NULL;
+			Unit_3DS_StartPlacement(s);
+		}
+#endif
 
 		GFX_Screen_SetActive(SCREEN_0);
 
@@ -1121,6 +1237,8 @@ static void GameLoop_Main(void)
 		if (g_running && !g_debugScenario) {
 			GameLoop_LevelEnd();
 		}
+
+		sleepIdle();
 
 		if (!g_running) break;
 	}
@@ -1238,6 +1356,11 @@ void exit_handler(void)
 	(void)Cnecin();
 }
 #endif /* TOS */
+
+#ifdef __3DS__
+#include <3ds.h>
+u32 __stacksize__ = 256 * 1024;
+#endif
 
 #if defined(__APPLE__) && defined(SDL_MAJOR_VERSION) && (SDL_MAJOR_VERSION == 1)
 int SDL_main(int argc, char **argv)

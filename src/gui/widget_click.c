@@ -5,6 +5,9 @@
 #include <string.h>
 #include "multichar.h"
 #include "types.h"
+#ifdef __3DS__
+#include "gui_3ds.h"
+#endif
 #include "../os/endian.h"
 #include "../os/math.h"
 #include "../os/sleep.h"
@@ -42,12 +45,12 @@ static uint16 s_savegameCountOnDisk = 0;                    /*!< Amount of saveg
 
 static char *GenerateSavegameFilename(uint16 number)
 {
-	static char filename[13];
+	static char filename[14];
 	if (number >= 1000) {
 		Warning("Savegame #%hu not supported\n", number);
 		return NULL;
 	}
-	sprintf(filename, "_save%03hu.dat", number);
+	snprintf(filename, sizeof(filename), "_save%03hu.dat", number);
 	return filename;
 }
 
@@ -451,6 +454,9 @@ static void GUI_Window_Create(WindowDesc *desc)
 	uint8 i;
 
 	if (desc == NULL) return;
+#ifdef __3DS__
+	GUI_3DS_SetWindow(desc);
+#endif
 
 	g_widgetLinkedListTail = NULL;
 
@@ -688,6 +694,8 @@ static bool GUI_YesNo(uint16 stringID)
 	}
 
 	GUI_Window_RestoreScreen(desc);
+	g_widgetLinkedListTail = NULL;
+	g_viewport_forceRedraw = true;
 
 	return ret;
 }
@@ -790,6 +798,8 @@ bool GUI_Widget_Options_Click(Widget *w)
 	}
 
 	g_textDisplayNeedsUpdate = true;
+	g_widgetLinkedListTail = NULL;
+	g_viewport_forceRedraw = true;
 
 	Sprites_LoadTiles();
 	GUI_DrawInterfaceAndRadar(SCREEN_0);
@@ -860,6 +870,19 @@ static void FillSavegameDesc(bool save)
  */
 static bool GUI_Widget_Savegame_Click(uint16 index)
 {
+#ifdef __3DS__
+	/* The system applet replaces the DOS edit box, which has no 3DS text input. */
+	if(index>=5) return false;
+	char description[51];
+	snprintf(description,sizeof(description),"%s",g_savegameDesc[index][0]=='[' ? "" : g_savegameDesc[index]);
+	g_widgetLinkedListTail=NULL;
+	GUI_3DS_SetWindow(NULL);
+	if(!GUI_3DS_InputSaveName(description)) { FillSavegameDesc(true); return false; }
+	bool saved=SaveGame_SaveFile(GenerateSavegameFilename(s_savegameIndexBase-index),description);
+	FillSavegameDesc(true);
+	return saved;
+#else
+
 	WindowDesc *desc = &g_savegameNameWindowDesc;
 	bool loop;
 	char *saveDesc = g_savegameDesc[index];
@@ -920,6 +943,7 @@ static bool GUI_Widget_Savegame_Click(uint16 index)
 	GUI_Window_RestoreScreen(desc);
 
 	return ret;
+#endif
 }
 
 static void UpdateArrows(bool save, bool force)

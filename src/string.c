@@ -104,6 +104,7 @@ const char *String_GenerateFilename(const char *name)
  */
 char *String_Get_ByIndex(uint16 stringID)
 {
+	if (s_stringsBuffer == NULL || s_strings == NULL) return "";
 	return s_stringsBuffer + s_strings[stringID];
 }
 

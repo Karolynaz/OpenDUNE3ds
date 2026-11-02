@@ -8,5 +8,8 @@ extern bool g_canSkipIntro;
 extern void GameLoop_LevelEndAnimation(void);
 extern void GameLoop_GameEndAnimation(void);
 extern void GameLoop_GameIntroAnimation(void);
+#ifdef __3DS__
+extern void GameLoop_3DS_LaunchSequence(void);
+#endif
 
 #endif

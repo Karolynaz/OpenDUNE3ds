@@ -29,6 +29,10 @@
 #include <FindDirectory.h>
 #include <StorageDefs.h>
 #endif /* HAIKU */
+#ifdef __3DS__
+#include <3ds.h>
+#include "file_3ds.h"
+#endif
 
 /* Set DUNE_DATA_DIR at compile time.  e.g. */
 /* #define DUNE_DATA_DIR "/usr/local/share/opendune" */
@@ -552,6 +556,9 @@ bool File_Init(void)
 		if (find_directory(B_USER_SETTINGS_DIRECTORY, 0, true, buf, sizeof(buf)) == B_OK) {
 			snprintf(g_personal_data_dir, sizeof(g_personal_data_dir), "%s/opendune/savegames", buf);
 		}
+#elif defined(__3DS__)
+		(void)homedir;
+		strcpy(g_personal_data_dir, "sdmc:/3ds/dune3ds");
 #else /* _WIN32 / TOS / DOS / __HAIKU__ */
 		/* ~/.config/opendune (Linux)  ~/Library/Application Support/OpenDUNE (Mac OS X) */
 		homedir = getenv("HOME");
@@ -609,6 +616,11 @@ bool File_Init(void)
 		}
     }
 #endif /* OSX */
+#ifdef __3DS__
+	romfsInit();
+	const char *dataDir3DS = File_3DS_FindDataDirectory();
+	strncpy(g_dune_data_dir, dataDir3DS, sizeof(g_dune_data_dir));
+#endif
 	if (IniFile_GetString("datadir", NULL, buf, sizeof(buf)) != NULL) {
 		/* datadir is defined in opendune.ini */
 		strncpy(g_dune_data_dir, buf, sizeof(g_dune_data_dir));
@@ -648,6 +660,9 @@ void File_Uninit(void)
 		s_files_in_pak = e->next;
 		free(e);
 	}
+#ifdef __3DS__
+	romfsExit();
+#endif
 }
 
 /**

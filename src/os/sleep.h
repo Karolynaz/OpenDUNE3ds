@@ -7,6 +7,10 @@
 	#include <windows.h>
 	#define sleep(x) Sleep(x * 1000)
 	#define msleep(x) Sleep(x)
+#elif defined(__3DS__)
+	#include <3ds.h>
+	#define sleep(x) svcSleepThread((u64)(x) * 1000000000ULL)
+	#define msleep(x) svcSleepThread((u64)(x) * 1000000ULL)
 #else
 	#if !defined(__USE_BSD)
 		#define __USE_BSD

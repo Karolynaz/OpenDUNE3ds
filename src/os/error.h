@@ -9,6 +9,7 @@
 
 extern void Error(const char *format, ...);
 extern void Warning(const char *format, ...);
+extern void TraceLog(const char *format, ...);
 #ifdef _DEBUG
 extern void Debug(const char *format, ...);
 #elif !defined(__GNUC__) || __GNUC__ > 3 \

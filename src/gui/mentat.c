@@ -5,6 +5,9 @@
 #include <string.h>
 #include "multichar.h"
 #include "types.h"
+#ifdef __3DS__
+#include "gui_3ds.h"
+#endif
 #include "../os/endian.h"
 #include "../os/sleep.h"
 #include "../os/strings.h"
@@ -87,6 +90,8 @@ static void GUI_Mentat_ShowDialog(uint8 houseID, uint16 stringID, const char *ws
 {
 	Widget *w1, *w2;
 
+	ReadBuffer_EnsureAllocated();
+
 	if (g_debugSkipDialogs) {
 		Debug("Skipping Mentat dialog...\n");
 		return;
@@ -116,6 +121,30 @@ static void GUI_Mentat_ShowDialog(uint8 houseID, uint16 stringID, const char *ws
 	if (musicID != 0xFFFF) Driver_Music_FadeOut();
 }
 
+#ifdef __3DS__
+int g_3dsMentatTapRow = -1;   /* Row (0..10) tapped on the bottom screen, or -1. */
+int g_3dsMentatMove = 0;
+int g_3dsMentatScroll = 0;    /* Pending scroll request from the bottom screen (-1 up, +1 down). */
+
+/** Fetch the 11 visible help list rows for the 3DS bottom screen. Returns the selected row. */
+int GUI_Mentat_3DS_GetRows(const char *text[11], bool header[11])
+{
+	uint8 *h = s_helpSubjects;
+	uint16 i;
+	for (i = 0; i < 11; i++) {
+		if (h == NULL || i + s_topHelpList >= s_numberHelpSubjects || *h == '\0') {
+			text[i] = "";
+			header[i] = true;
+			continue;
+		}
+		text[i] = (const char *)h + 7;
+		header[i] = (h[6] == '0');
+		h = String_NextString(h);
+	}
+	return s_selectedHelpSubject;
+}
+#endif
+
 static void GUI_Mentat_HelpListLoop(void)
 {
 	uint16 key;
@@ -126,6 +155,32 @@ static void GUI_Mentat_HelpListLoop(void)
 		GUI_Mentat_Animation(0);
 
 		key = GUI_Widget_HandleEvents(w);
+
+#ifdef __3DS__
+		if (g_3dsMentatMove) {
+ key = g_3dsMentatMove < 0 ? 0x60 : 0x62;
+ g_3dsMentatMove = 0;
+ }
+ /* B button: leave the Mentat help list. */
+		if (g_3dsMentatExit) {
+			g_3dsMentatExit = false;
+			break;
+		}
+		if (g_3dsMentatTapRow >= 0) {
+			int row = g_3dsMentatTapRow;
+			g_3dsMentatTapRow = -1;
+			s_selectMentatHelp = true;
+			GUI_Mentat_List_Click(GUI_Widget_Get_ByIndex(w, row + 3)); /* select */
+			GUI_Mentat_List_Click(GUI_Widget_Get_ByIndex(w, row + 3)); /* open */
+			s_selectMentatHelp = false;
+			key = 0;
+		}
+		if (g_3dsMentatScroll != 0) {
+			if (g_3dsMentatScroll < 0) GUI_Widget_Scrollbar_ArrowUp_Click(g_widgetMentatScrollbar);
+			else GUI_Widget_Scrollbar_ArrowDown_Click(g_widgetMentatScrollbar);
+			g_3dsMentatScroll = 0;
+		}
+#endif
 
 		if ((key & 0x800) != 0) key = 0;
 
@@ -210,7 +265,8 @@ static void GUI_Mentat_LoadHelpSubjects(bool init)
 		s_selectedHelpSubject = 0;
 
 		sprintf(s_mentatFilename, "MENTAT%c", g_table_houseInfo[g_playerHouseID].name[0]);
-		strncpy(s_mentatFilename, String_GenerateFilename(s_mentatFilename), sizeof(s_mentatFilename));
+		strncpy(s_mentatFilename, String_GenerateFilename(s_mentatFilename), sizeof(s_mentatFilename) - 1);
+		s_mentatFilename[sizeof(s_mentatFilename) - 1] = '\0';
 	}
 
 	fileID = ChunkFile_Open(s_mentatFilename);
@@ -338,7 +394,20 @@ static void GUI_Mentat_ShowHelpList(bool proceed)
 
 	GFX_Screen_SetActive(SCREEN_0);
 
+#ifdef __3DS__
+	g_3dsMentatExit = false;
+	g_3dsMentatHelpActive = true;
+ g_3dsMentatMove=0; g_3dsMentatTapRow=-1; g_3dsMentatScroll=0;
+ Mouse_EventHandler(0,0,false,false);
+#endif
+
 	GUI_Mentat_HelpListLoop();
+
+#ifdef __3DS__
+	g_3dsMentatHelpActive = false;
+	g_3dsMentatExit = false;
+	GUI_3DS_SetMentatButtons(NULL);
+#endif
 
 	free(g_widgetMentatFirst); g_widgetMentatFirst = NULL;
 
@@ -434,10 +503,17 @@ uint16 GUI_Mentat_Show(char *stringBuffer, const char *wsaFilename, Widget *w)
 	ret = GUI_Mentat_Loop(wsaFilename, NULL, stringBuffer, true, NULL);
 
 	if (w != NULL) {
+#ifdef __3DS__
+		GUI_3DS_SetMentatButtons(w);
+#endif
 		do {
+#ifndef __3DS__
 			GUI_Widget_DrawAll(w);
+#endif
 			ret = GUI_Widget_HandleEvents(w);
-
+#ifdef __3DS__
+			ret = GUI_3DS_MentatEvent(ret);
+#endif
 			GUI_PaletteAnimate();
 			GUI_Mentat_Animation(0);
 
@@ -445,6 +521,9 @@ uint16 GUI_Mentat_Show(char *stringBuffer, const char *wsaFilename, Widget *w)
 		} while ((ret & 0x8000) == 0);
 	}
 
+#ifdef __3DS__
+	GUI_3DS_SetMentatButtons(NULL);
+#endif
 	Input_History_Clear();
 
 	if (w != NULL) {
@@ -932,11 +1011,18 @@ static void GUI_Mentat_ShowHelp(void)
 	 * a misaligned uint32 access is an address error on 68000 */
 	offset = READ_BE_UINT32(subject + 1);
 
+#ifdef __3DS__
+	/* Pause the help list renderer while SCREEN_1 is reused for compressed text and WSA frames. */
+	g_3dsMentatHelpActive = false;
+#endif
+
 	fileID = ChunkFile_Open(s_mentatFilename);
 	ChunkFile_Read(fileID, HTOBE32(CC_INFO), &info, 12);
 	ChunkFile_Close(fileID);
 
 	info.length = HTOBE32(info.length);
+
+	ReadBuffer_EnsureAllocated();
 
 	text = g_readBuffer;
 	compressedText = GFX_Screen_Get_ByIndex(SCREEN_1);
@@ -981,6 +1067,13 @@ static void GUI_Mentat_ShowHelp(void)
 	GUI_Mentat_Create_HelpScreen_Widgets();
 
 	GUI_Mentat_Draw(true);
+
+#ifdef __3DS__
+	/* Drop the stale button list so the help list gets normal menu input again. */
+	GUI_3DS_SetMentatButtons(NULL);
+	g_3dsMentatExit = false;
+	g_3dsMentatHelpActive = true;
+#endif
 }
 
 /**
@@ -1080,6 +1173,9 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 	uint16 textLines;
 	uint16 step;
 
+#ifdef __3DS__
+	GUI_3DS_SetMentatButtons(w);
+#endif
 	dirty = false;
 	textTick = 0;
 	textDelay = 0;
@@ -1123,6 +1219,9 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 		GFX_Screen_SetActive(SCREEN_0);
 
 		key = GUI_Widget_HandleEvents(w);
+#ifdef __3DS__
+		if (w != NULL) key = GUI_3DS_MentatEvent(key);
+#endif
 
 		GUI_PaletteAnimate();
 
@@ -1182,6 +1281,9 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 					GUI_Mouse_Hide_InRegion(0, 0, SCREEN_WIDTH, 40);
 					GUI_Screen_Copy(0, 160, 0, 0, SCREEN_WIDTH / 8, 40, SCREEN_2, SCREEN_0);
 					GUI_Mouse_Show_InRegion();
+#ifdef __3DS__
+					GUI_3DS_SetSubtitle(NULL);
+#endif
 
 					step = 4;
 					mentatSpeakingMode = 0;
@@ -1194,6 +1296,9 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 					if (textLines-- != 0) {
 						GFX_Screen_SetActive(SCREEN_2);
 						GUI_DrawText_Wrapper(text, 4, 1, g_curWidgetFGColourBlink, 0, 0x32);
+#ifdef __3DS__
+						GUI_3DS_SetSubtitle(text);
+#endif
 						mentatSpeakingMode = 1;
 						textDelay = (uint32)strlen(text) * 4;
 						textTick = g_timerGUI + textDelay;
@@ -1207,9 +1312,11 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 						GFX_Screen_SetActive(SCREEN_0);
 					}
 
+#ifndef __3DS__
 					GUI_Mouse_Hide_InRegion(0, 0, SCREEN_WIDTH, 40);
 					GUI_Screen_Copy(0, 0, 0, 0, SCREEN_WIDTH / 8, 40, SCREEN_2, SCREEN_0);
 					GUI_Mouse_Show_InRegion();
+#endif
 					break;
 				}
 
@@ -1276,6 +1383,10 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 
 	Input_History_Clear();
 
+#ifdef __3DS__
+	GUI_3DS_SetSubtitle(NULL);
+	GUI_3DS_SetMentatButtons(NULL);
+#endif
 	return result;
 }
 

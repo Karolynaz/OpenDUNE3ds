@@ -109,7 +109,11 @@ typedef struct tile32 {
 #undef pixel
 #endif
 
-#ifndef bool
+#if defined(__3DS__) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L)
+#include <stdbool.h>
+#elif defined(__bool_true_false_are_defined) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L) || defined(__cplusplus)
+/* bool is standard in C23/C++ */
+#elif !defined(bool)
 typedef unsigned char bool;
 #define false 0
 #define true 1

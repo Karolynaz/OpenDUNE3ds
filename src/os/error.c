@@ -42,6 +42,30 @@ void Warning(const char *format, ...) {
 	va_end(ap);
 }
 
+#ifdef __3DS__
+#include <3ds.h>
+#endif
+
+void TraceLog(const char *format, ...) {
+	va_list ap;
+	char buffer[512];
+	va_start(ap, format);
+	vsnprintf(buffer, sizeof(buffer), format, ap);
+	va_end(ap);
+
+#ifdef __3DS__
+	svcOutputDebugString(buffer, strlen(buffer));
+	FILE *f = fopen("sdmc:/3ds/dune3ds/trace.log", "a");
+	if (f) {
+		fprintf(f, "%s\n", buffer);
+		fflush(f);
+		fclose(f);
+	}
+#else
+	fprintf(stderr, "%s\n", buffer);
+#endif
+}
+
 #ifdef _DEBUG
 void Debug(const char *format, ...) {
 	va_list ap;

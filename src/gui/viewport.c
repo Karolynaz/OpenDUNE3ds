@@ -32,7 +32,9 @@
 #include "../unit.h"
 
 static uint32 s_tickCursor;                                 /*!< Stores last time Viewport changed the cursor spriteID. */
+#ifndef __3DS__
 static uint32 s_tickMapScroll;                              /*!< Stores last time Viewport ran MapScroll function. */
+#endif
 static uint32 s_tickClick;                                  /*!< Stores last time Viewport handled a click. */
 
 /**
@@ -47,6 +49,11 @@ bool GUI_Widget_Viewport_Click(Widget *w)
 	uint16 spriteID;
 	uint16 packed;
 	bool click, drag;
+
+#ifdef __3DS__
+	/* HID owns camera scrolling. A stale DOS mouse edge must not move it back. */
+	if(w->index>=39 && w->index<=42) return true;
+#endif
 
 	spriteID = g_cursorSpriteID;
 	switch (w->index) {
@@ -98,6 +105,7 @@ bool GUI_Widget_Viewport_Click(Widget *w)
 		case 42: direction = 4; break;
 	}
 
+#ifndef __3DS__
 	if (direction != 0xFFFF) {
 		/* Always scroll if we have a click or a drag */
 		if (!click && !drag) {
@@ -112,6 +120,10 @@ bool GUI_Widget_Viewport_Click(Widget *w)
 		Map_MoveDirection(direction);
 		return true;
 	}
+
+#else
+	VARIABLE_NOT_USED(direction);
+#endif
 
 	if (click) {
 		x = g_mouseClickX;

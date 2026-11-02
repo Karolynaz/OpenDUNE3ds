@@ -31,3 +31,7 @@ tools/*.pyc
 tools/amigaMXextract
 tools/extractpak
 .*.swp
+build/
+*.3dsx
+*.cia
+*.smdh
