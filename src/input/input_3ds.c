@@ -257,6 +257,8 @@ void Input_3DS_Poll(void)
 				g_3dsHouseBack = true;
 			} else if (GUI_3DS_IsMentatButtonsActive()) {
 				GUI_3DS_MentatChoose(0x8002);
+			} else if (GUI_3DS_CancelMenu()) {
+				/* Handled by 3DS dialog/Hall of Fame cancel */
 			} else if (isMenuOrDialog) {
 				if (g_3dsMentatHelpActive) g_3dsMentatExit = true;
 				GUI_3DS_MentatChoose(0x8002);
@@ -345,7 +347,7 @@ void Input_3DS_Poll(void)
 		s_touchActive = false;
 	}
 
-	/* SELECT opens the currently selected factory/barracks/starport, or defaults to the Construction Yard. */
+	/* SELECT jumps to and selects the Construction Yard (or opens the currently selected factory if already selected). */
 	if (!isMenuOrDialog && (kDown & KEY_SELECT)) {
 		Structure *sel = Unit_3DS_GetSelectedStructure();
 		if (sel != NULL && sel->o.houseID == g_playerHouseID && g_table_structureInfo[sel->o.type].o.flags.factory) {
@@ -355,16 +357,8 @@ void Input_3DS_Poll(void)
 				Unit_3DS_OpenFactory(sel);
 			}
 		} else {
-			PoolFindStruct find = {g_playerHouseID, STRUCTURE_CONSTRUCTION_YARD, 0xFFFF};
-			Structure *yard = Structure_Find(&find);
-			if (yard != NULL) {
-				if (g_selectionType == SELECTIONTYPE_PLACE) Unit_3DS_CancelPlacement();
-				if (yard->o.linkedID != STRUCTURE_INVALID && yard->countDown == 0) {
-					g_3dsRequestedStartPlacement = yard;
-				} else {
-					Unit_3DS_OpenFactory(yard);
-				}
-			}
+			if (g_selectionType == SELECTIONTYPE_PLACE) Unit_3DS_CancelPlacement();
+			Unit_3DS_CycleStructureType(0);
 		}
 	}
 

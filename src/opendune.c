@@ -700,8 +700,8 @@ static void GameLoop_GameIntroAnimationMenu(void)
 	static const uint16 mainMenuStrings[][6] = {
 		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL, STR_NULL}, /* Neither HOF nor save. */
 		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL, STR_NULL}, /* Has a save game. */
-		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_HALL_OF_FAME, STR_NULL}, /* Has a HOF. */
-		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_HALL_OF_FAME, STR_NULL}  /* Has a HOF and a save game. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_HALL_OF_FAME, STR_EXIT_GAME, STR_NULL}, /* Has a HOF. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_HALL_OF_FAME, STR_EXIT_GAME, STR_NULL}  /* Has a HOF and a save game. */
 	};
 
 	bool loadGame = false;
@@ -726,8 +726,12 @@ static void GameLoop_GameIntroAnimationMenu(void)
 	}
 #endif
 
-	if (index == 0xFFFF) {
-		hasSave = File_Exists_Personal("_save000.dat");
+	if (index == 0xFFFF || drawMenu) {
+		hasSave = File_Exists_Personal("_save000.dat") ||
+		          File_Exists_Personal("_save001.dat") ||
+		          File_Exists_Personal("_save002.dat") ||
+		          File_Exists_Personal("_save003.dat") ||
+		          File_Exists_Personal("_save004.dat");
 		hasFame = File_Exists_Personal("SAVEFAME.DAT");
 		index = (hasFame ? 2 : 0) + (hasSave ? 1 : 0);
 	}
@@ -807,6 +811,9 @@ static void GameLoop_GameIntroAnimationMenu(void)
 			GFX_SetPalette(g_palette1);
 
 			if (GUI_Widget_SaveLoad_Click(false)) {
+#ifdef __3DS__
+				g_selectionType = SELECTIONTYPE_MENTAT;
+#endif
 				loadGame = true;
 				if (g_gameMode == GM_RESTART) break;
 				g_gameMode = GM_NORMAL;
@@ -1653,6 +1660,9 @@ void Game_Init(void)
 
 	g_activeAction          = 0xFFFF;
 	g_structureActiveType   = 0xFFFF;
+#ifdef __3DS__
+	Unit_3DS_Init();
+#endif
 
 	GUI_DisplayText(NULL, -1);
 

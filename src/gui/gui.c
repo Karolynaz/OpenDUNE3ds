@@ -4314,6 +4314,9 @@ static Widget *GUI_HallOfFame_CreateButtons(HallOfFameStruct *data)
 	wClear->flags.notused2 = true;
 	wClear->flags.buttonFilterLeft = 4;
 	wClear->flags.buttonFilterRight = 4;
+#ifdef __3DS__
+	wClear->flags.invisible = true;
+#endif
 	wClear->data      = data;
 
 	/* "Resume Game" */
@@ -4328,6 +4331,12 @@ static Widget *GUI_HallOfFame_CreateButtons(HallOfFameStruct *data)
 	wResume->flags.notused2 = true;
 	wResume->flags.buttonFilterLeft = 4;
 	wResume->flags.buttonFilterRight = 4;
+#ifdef __3DS__
+	wResume->drawModeNormal = DRAW_MODE_NONE;
+	wResume->drawModeSelected = DRAW_MODE_NONE;
+	wResume->drawModeDown = DRAW_MODE_NONE;
+	wResume->shortcut2 = 0x01;
+#endif
 	wResume->data      = data;
 
 	return GUI_Widget_Insert(wClear, wResume);
@@ -4458,6 +4467,9 @@ void GUI_HallOfFame_Show(uint16 score)
 			oldScreenID = GFX_Screen_SetActive(SCREEN_0);
 			Widget_SetAndPaintCurrentWidget(19);
 			GFX_Screen_SetActive(oldScreenID);
+#ifdef __3DS__
+			sleepIdle();
+#endif
 
 			uint16 nameResult=GUI_EditBox(name, 5, 19, NULL, &GUI_HallOfFame_Tick, false);
 #ifdef __3DS__
@@ -4497,7 +4509,14 @@ void GUI_HallOfFame_Show(uint16 score)
 	GFX_Screen_SetActive(SCREEN_0);
 
 	for (g_doQuitHOF = false; !g_doQuitHOF; sleepIdle()) {
-		GUI_Widget_HandleEvents(w);
+		uint16 key = GUI_Widget_HandleEvents(w);
+#ifdef __3DS__
+		if (key == 0x01 || key == 0x1C || key == 0x2B || key == 0x3D || key == 0x61 || key == 0x6E) {
+			g_doQuitHOF = true;
+		}
+#else
+		VARIABLE_NOT_USED(key);
+#endif
 	}
 
 	#ifdef __3DS__

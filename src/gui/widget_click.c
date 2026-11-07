@@ -6,6 +6,7 @@
 #include "multichar.h"
 #include "types.h"
 #ifdef __3DS__
+#include <time.h>
 #include "gui_3ds.h"
 #endif
 #include "../os/endian.h"
@@ -644,6 +645,9 @@ static void GUI_Widget_GameControls_Click(Widget *w)
 	}
 
 	GUI_Window_RestoreScreen(desc);
+#ifdef __3DS__
+	GUI_3DS_SetWindow(NULL);
+#endif
 }
 
 /* shade everything except colors 231 to 238 */
@@ -694,6 +698,9 @@ static bool GUI_YesNo(uint16 stringID)
 	}
 
 	GUI_Window_RestoreScreen(desc);
+#ifdef __3DS__
+	GUI_3DS_SetWindow(NULL);
+#endif
 	g_widgetLinkedListTail = NULL;
 	g_viewport_forceRedraw = true;
 
@@ -798,6 +805,9 @@ bool GUI_Widget_Options_Click(Widget *w)
 	}
 
 	g_textDisplayNeedsUpdate = true;
+#ifdef __3DS__
+	GUI_3DS_SetWindow(NULL);
+#endif
 	g_widgetLinkedListTail = NULL;
 	g_viewport_forceRedraw = true;
 
@@ -833,6 +843,78 @@ static uint16 GetSavegameCount(void)
 
 static void FillSavegameDesc(bool save)
 {
+#ifdef __3DS__
+	VARIABLE_NOT_USED(save);
+	uint8 i;
+	const char *yes = String_Get_ByIndex(STR_YES);
+	bool isLT = (yes != NULL && (yes[0] == 'T' || yes[0] == 't'));
+
+	{
+		uint8 *scr2 = GFX_Screen_Get_ByIndex(SCREEN_2);
+		if (scr2 != NULL && Sprites_LoadImage("HERALD.CPS", SCREEN_2, NULL) != 0) {
+			GUI_3DS_CacheHeraldCrests(scr2);
+		}
+	}
+
+	for (i = 0; i < 5; i++) {
+		char *desc = g_savegameDesc[i];
+		char *filename = GenerateSavegameFilename(i);
+		char rawName[51];
+		uint8 fileId;
+		uint8 houseID = HOUSE_ATREIDES;
+		uint16 mission = 1;
+		bool used = false;
+
+		*desc = '\0';
+		rawName[0] = '\0';
+
+		fileId = ChunkFile_Open_Personal(filename);
+		if (fileId != FILE_INVALID) {
+			uint8 infoBuf[260];
+			uint8 plyrBuf[62 * 6];
+			uint32 infoLen;
+			uint32 plyrLen;
+
+			if (ChunkFile_Read(fileId, HTOBE32(CC_NAME), rawName, 50) > 0) {
+				rawName[50] = '\0';
+				used = (rawName[0] != '\0');
+			}
+
+			memset(infoBuf, 0, sizeof(infoBuf));
+			infoLen = ChunkFile_Read(fileId, HTOBE32(CC_INFO), infoBuf, sizeof(infoBuf));
+			if (infoLen >= 250) {
+				uint16 version = (uint16)(infoBuf[0] | (infoBuf[1] << 8));
+				uint16 campID = 0;
+				if (version == 0x0290) {
+					campID = (uint16)(infoBuf[248] | (infoBuf[249] << 8));
+				} else if (infoLen >= 256) {
+					campID = (uint16)(infoBuf[254] | (infoBuf[255] << 8));
+				}
+				mission = clamp(campID + 1, 1, 9);
+			}
+
+			memset(plyrBuf, 0, sizeof(plyrBuf));
+			plyrLen = ChunkFile_Read(fileId, HTOBE32(CC_PLYR), plyrBuf, sizeof(plyrBuf));
+			for (uint32 off = 0; off + 62 <= plyrLen; off += 62) {
+				uint8 hIdx = plyrBuf[off];
+				uint16 hFlags = (uint16)(plyrBuf[off + 3] | (plyrBuf[off + 4] << 8));
+				if ((hFlags & 2) != 0 && hIdx < HOUSE_MAX) {
+					houseID = hIdx;
+					break;
+				}
+			}
+
+			ChunkFile_Close(fileId);
+		}
+
+		if (used) {
+			snprintf(desc, 51, "%u. %.44s", (unsigned)(i + 1), rawName);
+		} else {
+			snprintf(desc, 51, "%u. %s", (unsigned)(i + 1), isLT ? "Tuscia" : "Empty");
+		}
+		GUI_3DS_SetSaveSlotInfo(i, used, houseID, mission, rawName);
+	}
+#else
 	uint8 i;
 
 	for (i = 0; i < 5; i++) {
@@ -859,6 +941,7 @@ static void FillSavegameDesc(bool save)
 		ChunkFile_Close(fileId);
 		continue;
 	}
+#endif
 }
 
 
@@ -871,14 +954,16 @@ static void FillSavegameDesc(bool save)
 static bool GUI_Widget_Savegame_Click(uint16 index)
 {
 #ifdef __3DS__
-	/* The system applet replaces the DOS edit box, which has no 3DS text input. */
-	if(index>=5) return false;
+	if (index >= 5) return false;
 	char description[51];
-	snprintf(description,sizeof(description),"%s",g_savegameDesc[index][0]=='[' ? "" : g_savegameDesc[index]);
-	g_widgetLinkedListTail=NULL;
-	GUI_3DS_SetWindow(NULL);
-	if(!GUI_3DS_InputSaveName(description)) { FillSavegameDesc(true); return false; }
-	bool saved=SaveGame_SaveFile(GenerateSavegameFilename(s_savegameIndexBase-index),description);
+	time_t now = time(NULL);
+	struct tm *tmInfo = localtime(&now);
+	if (tmInfo != NULL && tmInfo->tm_year >= 100) {
+		strftime(description, sizeof(description), "%Y-%m-%d %H:%M", tmInfo);
+	} else {
+		snprintf(description, sizeof(description), "2026-11-07 12:00");
+	}
+	bool saved = SaveGame_SaveFile(GenerateSavegameFilename(index), description);
 	FillSavegameDesc(true);
 	return saved;
 #else
@@ -946,6 +1031,7 @@ static bool GUI_Widget_Savegame_Click(uint16 index)
 #endif
 }
 
+#ifndef __3DS__
 static void UpdateArrows(bool save, bool force)
 {
 	static uint16 previousIndex = 0;
@@ -971,6 +1057,7 @@ static void UpdateArrows(bool save, bool force)
 		GUI_Widget_Undraw(w, 233);
 	}
 }
+#endif
 
 /**
  * Handles Click event for "Save Game" or "Load Game" button.
@@ -986,22 +1073,29 @@ bool GUI_Widget_SaveLoad_Click(bool save)
 	s_savegameCountOnDisk = GetSavegameCount();
 
 	s_savegameIndexBase = max(0, s_savegameCountOnDisk - (save ? 0 : 1));
-
-	FillSavegameDesc(save);
+#ifdef __3DS__
+	desc->addArrows = false;
+#endif
 
 	desc->stringID = save ? STR_SELECT_A_POSITION_TO_SAVE_TO : STR_SELECT_A_SAVED_GAME_TO_LOAD;
+
+	FillSavegameDesc(save);
 
 	GUI_Window_BackupScreen(desc);
 
 	GUI_Window_Create(desc);
 
+#ifndef __3DS__
 	UpdateArrows(save, true);
+#endif
 
 	for (loop = true; loop; sleepIdle()) {
 		Widget *w = g_widgetLinkedListTail;
 		uint16 key = GUI_Widget_HandleEvents(w);
 
+#ifndef __3DS__
 		UpdateArrows(save, false);
+#endif
 
 		if ((key & 0x8000) != 0) {
 			Widget *w2;
@@ -1031,23 +1125,47 @@ bool GUI_Widget_SaveLoad_Click(bool save)
 					break;
 
 				default: {
-					GUI_Window_RestoreScreen(desc);
-
 					key -= 0x1E;
+
+#ifdef __3DS__
+					if (key >= 5) break;
+					if (!save) {
+						if (!GUI_3DS_IsSaveSlotUsed(key)) {
+							break;
+						}
+						GUI_Window_RestoreScreen(desc);
+						GUI_3DS_SetWindow(NULL);
+						g_widgetLinkedListTail = NULL;
+						return SaveGame_LoadFile(GenerateSavegameFilename(key));
+					}
+
+					GUI_Window_RestoreScreen(desc);
+					if (GUI_Widget_Savegame_Click(key)) {
+						GUI_3DS_SetWindow(NULL);
+						g_widgetLinkedListTail = NULL;
+						return true;
+					}
+#else
+					GUI_Window_RestoreScreen(desc);
 
 					if (!save) {
 						return SaveGame_LoadFile(GenerateSavegameFilename(s_savegameIndexBase - key));
 					}
 
 					if (GUI_Widget_Savegame_Click(key)) return true;
+#endif
 
 					GUI_Window_BackupScreen(desc);
 
+#ifndef __3DS__
 					UpdateArrows(save, true);
+#endif
 
 					GUI_Window_Create(desc);
 
+#ifndef __3DS__
 					UpdateArrows(save, true);
+#endif
 				} break;
 			}
 
@@ -1058,6 +1176,10 @@ bool GUI_Widget_SaveLoad_Click(bool save)
 	}
 
 	GUI_Window_RestoreScreen(desc);
+#ifdef __3DS__
+	GUI_3DS_SetWindow(NULL);
+	g_widgetLinkedListTail = NULL;
+#endif
 
 	return false;
 }

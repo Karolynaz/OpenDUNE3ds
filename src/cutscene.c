@@ -335,6 +335,18 @@ static void GameLoop_PlayAnimation(const HouseAnimation_Animation *animation)
 {
 	uint8 animationStep = 0;
 
+#ifdef __3DS__
+	/* On 3DS, "Presents" and the "DUNE II" title were already shown during launch.
+	 * Start the intro movie directly at step 3 (INTRO2.WSA: "The planet Arrakis, known as Dune."). */
+	if (s_feedback_base_index == 0x4A) {
+		animationStep = 3;
+		animation += 3;
+		s_houseAnimation_currentSubtitle = 3;
+		memcpy(g_palette_998A, g_palette1, 256 * 3);
+		GFX_SetPalette(g_palette_998A);
+	}
+#endif
+
 	while (animation->duration != 0) {
 		uint16 frameCount;
 		uint16 posX;
@@ -498,6 +510,7 @@ static void GameLoop_PlayAnimation(const HouseAnimation_Animation *animation)
 				}
 				GameLoop_PlaySubtitle(animationStep);
 				displayed = WSA_DisplayFrame(wsa, frame++, posX, posY, SCREEN_0);
+				GameLoop_PalettePart_Update(false);
 				sleepIdle();
 			} while (displayed);
 		}
@@ -532,6 +545,7 @@ static void GameLoop_PlayAnimation(const HouseAnimation_Animation *animation)
 
 		while (timeout2 > g_timerGUI) {
 			if (Input_Keyboard_NextKey() != 0 && g_canSkipIntro) return;
+			GameLoop_PalettePart_Update(false);
 			sleepIdle();
 		}
 	}
@@ -1077,13 +1091,135 @@ logos_exit:
 
 #ifdef __3DS__
 typedef struct LaunchStar {
-	int16 x;
-	int16 y;
-	int8  speed;
-	uint8 color;
+	int16 x_fp;     /* X position in 1/4 pixels */
+	int16 y;        /* Y position in pixels */
+	int8  speed_fp; /* Speed in 1/4 pixels per frame */
+	uint8 size;     /* 0: tiny 1px, 1: small 3x3, 2: medium 5x5 cross, 3: large 9x9 cross */
 } LaunchStar;
 
-static void LaunchStarfield_StepAndDraw(LaunchStar *topStars, int topCount, LaunchStar *botStars, int botCount, bool advance)
+static uint32 s_starRng = 0x8F4C9B37u;
+
+static uint32 LaunchStar_NextRand(void)
+{
+	uint32 x = s_starRng;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	s_starRng = x;
+	return x;
+}
+
+static uint8 LaunchStar_PickSize(uint32 r)
+{
+	uint32 m = r % 20u;
+	if (m < 8u)  return 0; /* 40% tiny 1px blue dot */
+	if (m < 14u) return 1; /* 30% small 3x3 soft blue star */
+	if (m < 18u) return 2; /* 20% medium 5x5 4-pointed blue star */
+	return 3;              /* 10% large 9x9 4-pointed blue star */
+}
+
+static void LaunchStar_InitList(LaunchStar *stars, int count, int width, int height)
+{
+	for (int i = 0; i < count; i++) {
+		uint32 r1 = LaunchStar_NextRand();
+		uint32 r2 = LaunchStar_NextRand();
+		stars[i].x_fp     = (int16)(r1 % (uint32)(width * 4));
+		stars[i].y        = (int16)(4 + (r2 % (uint32)(height - 8)));
+		stars[i].size     = LaunchStar_PickSize(r1 >> 11);
+		stars[i].speed_fp = (int8)(3 + ((r2 >> 9) % 12u) + stars[i].size * 2);
+	}
+}
+
+/* Load the 8-step authentic Dune II blue star ramp into palette indices 248..255 */
+static void LaunchStar_SetupPalette(uint8 *pal)
+{
+	static const uint8 blueRamp[8][3] = {
+		{37, 54, 63}, /* 248: brightest icy-blue core */
+		{20, 48, 63}, /* 249: bright cyan-blue */
+		{20, 30, 53}, /* 250: sky blue */
+		{13, 21, 45}, /* 251: royal blue */
+		{10, 15, 38}, /* 252: medium blue */
+		{ 6,  8, 31}, /* 253: deep blue */
+		{ 2,  3, 22}, /* 254: dark blue */
+		{ 1,  1, 15}, /* 255: faintest dark blue */
+	};
+	for (int i = 0; i < 8; i++) {
+		pal[(248 + i) * 3 + 0] = blueRamp[i][0];
+		pal[(248 + i) * 3 + 1] = blueRamp[i][1];
+		pal[(248 + i) * 3 + 2] = blueRamp[i][2];
+	}
+}
+
+static inline void LaunchStar_PutPx(uint8 *buf, int stride, int x, int y, int baseCol, int fadeStep)
+{
+	int col = baseCol + fadeStep;
+	if (col <= 255 && x >= 0 && x < stride && y >= 0 && y < 240) {
+		uint8 cur = buf[y * stride + x];
+		if (cur == 0 || (cur >= 248 && col < (int)cur)) {
+			buf[y * stride + x] = (uint8)col;
+		}
+	}
+}
+
+static void LaunchStar_DrawSingle(uint8 *buf, int stride, int x, int y, uint8 size, int fadeStep)
+{
+	if (fadeStep >= 8) return;
+	switch (size) {
+		case 0: /* Tiny 1px blue star */
+			LaunchStar_PutPx(buf, stride, x, y, 252, fadeStep);
+			break;
+
+		case 1: /* Small 3x3 soft blue star */
+			LaunchStar_PutPx(buf, stride, x,     y,     250, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 1, y,     254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 1, y,     254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y - 1, 254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y + 1, 254, fadeStep);
+			break;
+
+		case 2: /* Medium 5x5 4-pointed blue star (+) */
+			LaunchStar_PutPx(buf, stride, x,     y,     249, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 1, y,     251, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 1, y,     251, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y - 1, 251, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y + 1, 251, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 2, y,     253, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 2, y,     253, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y - 2, 253, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y + 2, 253, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 1, y - 1, 255, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 1, y - 1, 255, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 1, y + 1, 255, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 1, y + 1, 255, fadeStep);
+			break;
+
+		default: /* Large 9x9 4-pointed blue star (+) */
+			LaunchStar_PutPx(buf, stride, x,     y,     248, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 1, y,     250, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 1, y,     250, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y - 1, 250, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y + 1, 250, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 2, y,     252, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 2, y,     252, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y - 2, 252, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y + 2, 252, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 3, y,     253, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 3, y,     253, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y - 3, 253, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y + 3, 253, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 4, y,     254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 4, y,     254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y - 4, 254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x,     y + 4, 254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 1, y - 1, 254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 1, y - 1, 254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x - 1, y + 1, 254, fadeStep);
+			LaunchStar_PutPx(buf, stride, x + 1, y + 1, 254, fadeStep);
+			break;
+	}
+}
+
+static void LaunchStarfield_StepAndDraw(LaunchStar *topStars, int topCount, LaunchStar *botStars, int botCount, bool advance, int fadeStep)
 {
 	memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
 	memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
@@ -1092,89 +1228,93 @@ static void LaunchStarfield_StepAndDraw(LaunchStar *topStars, int topCount, Laun
 
 	for (int i = 0; i < topCount; i++) {
 		if (advance) {
-			topStars[i].x -= topStars[i].speed;
-			if (topStars[i].x < 0) topStars[i].x += TOP_WIDTH;
-		}
-		int x = topStars[i].x;
-		int y = topStars[i].y;
-		if (x >= 0 && x < TOP_WIDTH && y >= 0 && y < TOP_HEIGHT) {
-			g_topScreenBuffer[y * TOP_WIDTH + x] = topStars[i].color;
-			if (topStars[i].speed >= 5 && x + 1 < TOP_WIDTH) {
-				g_topScreenBuffer[y * TOP_WIDTH + x + 1] = 13;
+			topStars[i].x_fp -= topStars[i].speed_fp;
+			if (topStars[i].x_fp < -20) {
+				uint32 r = LaunchStar_NextRand();
+				topStars[i].x_fp     = (int16)((TOP_WIDTH + 4) * 4 + (r & 15u));
+				topStars[i].y        = (int16)(4 + ((r >> 4) % (uint32)(TOP_HEIGHT - 8)));
+				topStars[i].size     = LaunchStar_PickSize(r >> 14);
+				topStars[i].speed_fp = (int8)(3 + ((r >> 20) % 12u) + topStars[i].size * 2);
 			}
 		}
+		LaunchStar_DrawSingle(g_topScreenBuffer, TOP_WIDTH, topStars[i].x_fp >> 2, topStars[i].y, topStars[i].size, fadeStep);
 	}
 
 	for (int i = 0; i < botCount; i++) {
 		if (advance) {
-			botStars[i].x -= botStars[i].speed;
-			if (botStars[i].x < 0) botStars[i].x += BOTTOM_WIDTH;
-		}
-		int x = botStars[i].x;
-		int y = botStars[i].y;
-		if (x >= 0 && x < BOTTOM_WIDTH && y >= 0 && y < BOTTOM_HEIGHT) {
-			g_bottomScreenBuffer[y * BOTTOM_WIDTH + x] = botStars[i].color;
-			if (botStars[i].speed >= 5 && x + 1 < BOTTOM_WIDTH) {
-				g_bottomScreenBuffer[y * BOTTOM_WIDTH + x + 1] = 13;
+			botStars[i].x_fp -= botStars[i].speed_fp;
+			if (botStars[i].x_fp < -20) {
+				uint32 r = LaunchStar_NextRand();
+				botStars[i].x_fp     = (int16)((BOTTOM_WIDTH + 4) * 4 + (r & 15u));
+				botStars[i].y        = (int16)(4 + ((r >> 4) % (uint32)(BOTTOM_HEIGHT - 8)));
+				botStars[i].size     = LaunchStar_PickSize(r >> 14);
+				botStars[i].speed_fp = (int8)(3 + ((r >> 20) % 12u) + botStars[i].size * 2);
 			}
 		}
+		LaunchStar_DrawSingle(g_bottomScreenBuffer, BOTTOM_WIDTH, botStars[i].x_fp >> 2, botStars[i].y, botStars[i].size, fadeStep);
 	}
 }
 
 void GameLoop_3DS_LaunchSequence(void)
 {
 	Screen oldScreenID = GFX_Screen_SetActive(SCREEN_0);
-	LaunchStar topStars[64];
-	LaunchStar botStars[48];
+	LaunchStar topStars[38];
+	LaunchStar botStars[28];
 	uint8 virginPal[256 * 3];
 	uint8 virginRemap[256];
 	uint8 *virginBuf = (uint8 *)calloc(1, 320 * 200);
 	uint8 *planetBuf = (uint8 *)calloc(1, 320 * 200);
+	uint8 *titleBuf  = (uint8 *)calloc(1, 320 * 200);
 
-	for (int i = 0; i < 64; i++) {
-		topStars[i].x = (int16)((i * 97u + 23u) % TOP_WIDTH);
-		topStars[i].y = (int16)((i * 53u + 11u) % TOP_HEIGHT);
-		topStars[i].speed = (int8)(2 + (i % 4));
-		topStars[i].color = (i % 3 == 0) ? 15 : ((i % 3 == 1) ? 14 : 13);
-	}
-	for (int i = 0; i < 48; i++) {
-		botStars[i].x = (int16)((i * 89u + 17u) % BOTTOM_WIDTH);
-		botStars[i].y = (int16)((i * 47u + 7u) % BOTTOM_HEIGHT);
-		botStars[i].speed = (int8)(2 + (i % 4));
-		botStars[i].color = (i % 3 == 0) ? 15 : ((i % 3 == 1) ? 14 : 13);
-	}
+	s_starRng = 0x8F4C9B37u ^ (uint32)g_timerGUI;
+	if (s_starRng == 0) s_starRng = 0x8F4C9B37u;
+	LaunchStar_InitList(topStars, 38, TOP_WIDTH, TOP_HEIGHT);
+	LaunchStar_InitList(botStars, 28, BOTTOM_WIDTH, BOTTOM_HEIGHT);
 
 	Input_History_Clear();
 	GUI_ChangeSelectionType(SELECTIONTYPE_INTRO);
 	GUI_3DS_SetTitleActive(false);
 	GUI_3DS_SetLaunchActive(true);
 
-	/* Preload planet background for Stage 4 and Title Menu */
+	/* Preload voices and assets upfront before any animation starts so there are no mid-animation I/O pauses */
+	Voice_LoadVoices(0xFFFF);
+
+	/* Preload planet with its blue nebula (without static background stars or index-12 black mask) */
 	File_ReadBlockFile("IBM.PAL", g_palette1, 256 * 3);
+	LaunchStar_SetupPalette(g_palette1);
 	if (planetBuf != NULL) {
-		if (File_Exists("BIGPLAN.CPS")) {
+		bool isBigPlan = File_Exists("BIGPLAN.CPS");
+		if (isBigPlan) {
 			Sprites_LoadImage("BIGPLAN.CPS", SCREEN_1, NULL);
 		} else {
 			Sprites_LoadImage("PLANET.CPS", SCREEN_1, NULL);
 		}
-		memcpy(planetBuf, GFX_Screen_Get_ByIndex(SCREEN_1), 320 * 200);
+		const uint8 *pSrc = (const uint8 *)GFX_Screen_Get_ByIndex(SCREEN_1);
+		for (int y = 0; y < 200; y++) {
+			for (int x = 0; x < 320; x++) {
+				uint8 px = pSrc[y * 320 + x];
+				if (px == 0 || px == 12) continue;
+				if (!isBigPlan) {
+					/* Skip the few static 4-pointed star crosses in PLANET.CPS outside the blue nebula */
+					if (x < 98) continue;
+					if (x >= 128 && x <= 140 && y >= 25 && y <= 36) continue;
+				}
+				planetBuf[y * 320 + x] = px;
+			}
+		}
 		GUI_3DS_SetPlanetBackground(planetBuf);
 	}
 
-	/* Stage 1: Stars flying from right to left across both screens */
-	GFX_SetPalette(g_palette1);
-	for (int f = 0; f < 45; f++) {
-		if (Input_Keyboard_NextKey() != 0) goto launch_finish;
-		LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
-		Timer_Sleep(2);
+	/* Preload TITLE.CPS upfront */
+	if (titleBuf != NULL) {
+		if (File_Exists("TITLE.CPS")) Sprites_LoadImage("TITLE.CPS", SCREEN_1, NULL);
+		else Sprites_LoadImage(String_GenerateFilename("TITLE"), SCREEN_1, NULL);
+		memcpy(titleBuf, GFX_Screen_Get_ByIndex(SCREEN_1), 320 * 200);
 	}
 
-	/* Stage 2: Westwood logo on top screen & Virgin logo on bottom screen over flying stars */
+	/* Preload WESTWOOD.PAL and VIRGIN.CPS upfront */
 	File_ReadBlockFile("WESTWOOD.PAL", g_palette_998A, 256 * 3);
-	/* Ensure star colors 13, 14, 15 are bright grey/white in the combined logo palette */
-	g_palette_998A[13 * 3 + 0] = 28; g_palette_998A[13 * 3 + 1] = 28; g_palette_998A[13 * 3 + 2] = 34;
-	g_palette_998A[14 * 3 + 0] = 44; g_palette_998A[14 * 3 + 1] = 44; g_palette_998A[14 * 3 + 2] = 48;
-	g_palette_998A[15 * 3 + 0] = 63; g_palette_998A[15 * 3 + 1] = 63; g_palette_998A[15 * 3 + 2] = 63;
+	LaunchStar_SetupPalette(g_palette_998A);
 
 	if (virginBuf != NULL && File_Exists("VIRGIN.CPS")) {
 		memset(virginPal, 0, sizeof(virginPal));
@@ -1195,6 +1335,15 @@ void GameLoop_3DS_LaunchSequence(void)
 		}
 	}
 
+	/* Stage 1: Blue multi-size stars flying from right to left across both screens */
+	GFX_SetPalette(g_palette1);
+	for (int f = 0; f < 45; f++) {
+		if (Input_Keyboard_NextKey() != 0) goto launch_finish;
+		LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
+		Timer_Sleep(2);
+	}
+
+	/* Stage 2: Westwood logo on top screen & Virgin logo on bottom screen over flying blue stars */
 	GFX_ClearScreen(SCREEN_0);
 	GFX_SetPalette(g_palette_998A);
 	Music_Play(0x24);
@@ -1211,7 +1360,7 @@ void GameLoop_3DS_LaunchSequence(void)
 					WSA_Unload(wsa);
 					goto launch_finish;
 				}
-				LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+				LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
 				for (int y = 0; y < 112; y++) {
 					const uint8 *sRow = wsaScreen + y * 320;
 					uint8 *dRow = g_topScreenBuffer + (y + 64) * TOP_WIDTH + 40;
@@ -1233,11 +1382,9 @@ void GameLoop_3DS_LaunchSequence(void)
 		}
 		if (wsa != NULL) WSA_Unload(wsa);
 
-		Voice_LoadVoices(0xFFFF);
-
 		for (int hold = 0; hold < 60; hold++) {
 			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
-			LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
 			for (int y = 0; y < 112; y++) {
 				const uint8 *sRow = wsaScreen + y * 320;
 				uint8 *dRow = g_topScreenBuffer + (y + 64) * TOP_WIDTH + 40;
@@ -1258,7 +1405,7 @@ void GameLoop_3DS_LaunchSequence(void)
 		}
 	}
 
-	/* Stage 3: "Presents" on top screen over flying starfield */
+	/* Stage 3: "Presents" on top screen over flying blue starfield */
 	GFX_SetPalette(g_palette1);
 	Music_Play(28);
 	{
@@ -1266,39 +1413,56 @@ void GameLoop_3DS_LaunchSequence(void)
 		if (presents == NULL || presents[0] == '\0') presents = "Presents";
 		for (int f = 0; f < 55; f++) {
 			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
-			LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
 			GUI_3DS_DrawTitleTextTopCentered(110, presents, 147, 144);
 			Timer_Sleep(2);
 		}
 	}
 
-	/* Stage 4: Fly up to the planet on bottom screen while DUNE II letters descend on top screen */
-	if (File_Exists("TITLE.CPS")) Sprites_LoadImage("TITLE.CPS", SCREEN_1, NULL);
-	else Sprites_LoadImage(String_GenerateFilename("TITLE"), SCREEN_1, NULL);
+	/* Stage 4: First the planet flies in from right to center of the top screen;
+	 * once the planet reaches the center, the DUNE II title descends over it. */
 	{
-		const uint8 *titleArt = (const uint8 *)GFX_Screen_Get_ByIndex(SCREEN_1);
-		const int totalSteps = 80;
-		for (int step = 0; step <= totalSteps; step++) {
-			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
-			LaunchStarfield_StepAndDraw(topStars, 64, botStars, 48, true);
+		const uint8 *titleArt = titleBuf;
+		const int planetSteps = 60;
+		const int titleSteps  = 45;
 
-			/* Planet approaches from right to center on the bottom screen */
-			int planetX = ((totalSteps - step) * BOTTOM_WIDTH) / totalSteps;
+		/* Step 4a: Planet flies in to the center of the top screen */
+		for (int step = 0; step <= planetSteps; step++) {
+			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
+			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
+
+			int planetX = 40 + ((planetSteps - step) * TOP_WIDTH) / planetSteps;
 			if (planetBuf != NULL) {
 				for (int y = 0; y < 200; y++) {
 					const uint8 *sRow = planetBuf + y * 320;
-					uint8 *dRow = g_bottomScreenBuffer + (y + 20) * BOTTOM_WIDTH;
+					uint8 *dRow = g_topScreenBuffer + (y + 20) * TOP_WIDTH;
 					for (int x = 0; x < 320; x++) {
 						int dx = planetX + x;
-						if (dx >= 0 && dx < BOTTOM_WIDTH && sRow[x] != 0) {
+						if (dx >= 0 && dx < TOP_WIDTH && sRow[x] != 0) {
 							dRow[dx] = sRow[x];
 						}
 					}
 				}
 			}
+			Timer_Sleep(2);
+		}
 
-			/* DUNE II letters descend from the top of the top screen */
-			int logoOffsetY = -120 + (step * 140) / totalSteps; /* -120 .. +20 */
+		/* Step 4b: Planet is now in the center of the top screen; DUNE II title descends over it */
+		for (int step = 0; step <= titleSteps; step++) {
+			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
+			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
+
+			if (planetBuf != NULL) {
+				for (int y = 0; y < 200; y++) {
+					const uint8 *sRow = planetBuf + y * 320;
+					uint8 *dRow = g_topScreenBuffer + (y + 20) * TOP_WIDTH + 40;
+					for (int x = 0; x < 320; x++) {
+						if (sRow[x] != 0) dRow[x] = sRow[x];
+					}
+				}
+			}
+
+			int logoOffsetY = -120 + (step * 140) / titleSteps; /* -120 .. +20 */
 			if (titleArt != NULL) {
 				for (int y = 0; y < 200; y++) {
 					int dy = logoOffsetY + y;
@@ -1310,12 +1474,39 @@ void GameLoop_3DS_LaunchSequence(void)
 					}
 				}
 			}
+			Timer_Sleep(2);
+		}
 
+		/* Stage 5: Once the planet is centered and the title has descended over it, fade out the stars */
+		for (int f = 1; f <= 32; f++) {
+			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
+			int fadeStep = (f * 8) / 32;
+			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, false, fadeStep);
+
+			if (planetBuf != NULL) {
+				for (int y = 0; y < 200; y++) {
+					const uint8 *sRow = planetBuf + y * 320;
+					uint8 *dRow = g_topScreenBuffer + (y + 20) * TOP_WIDTH + 40;
+					for (int x = 0; x < 320; x++) {
+						if (sRow[x] != 0) dRow[x] = sRow[x];
+					}
+				}
+			}
+			if (titleArt != NULL) {
+				for (int y = 0; y < 200; y++) {
+					const uint8 *sRow = titleArt + y * 320;
+					uint8 *dRow = g_topScreenBuffer + (y + 20) * TOP_WIDTH + 40;
+					for (int x = 0; x < 320; x++) {
+						if (sRow[x] != 0) dRow[x] = sRow[x];
+					}
+				}
+			}
 			Timer_Sleep(2);
 		}
 	}
 
 launch_finish:
+	free(titleBuf);
 	free(virginBuf);
 	free(planetBuf);
 	File_ReadBlockFile("IBM.PAL", g_palette1, 256 * 3);
@@ -1323,6 +1514,24 @@ launch_finish:
 	Input_History_Clear();
 	GUI_3DS_SetLaunchActive(false);
 	GFX_Screen_SetActive(oldScreenID);
+}
+
+/* When pressing "Play a game": immediately fade/black out both screens before starting the intro movie. */
+static void GameLoop_3DS_PlanetToTopTransition(void)
+{
+	GUI_3DS_SetTitleActive(false);
+	GUI_3DS_SetLaunchActive(true);
+	Input_History_Clear();
+
+	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
+	memset(g_bottomScreenUIMask, 0, sizeof(g_bottomScreenUIMask));
+
+	GUI_SetPaletteAnimated(g_palette2, 15);
+	memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
+	memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
+	GFX_ClearScreen(SCREEN_0);
+	Input_History_Clear();
+	GUI_3DS_SetLaunchActive(false);
 }
 #endif
 
@@ -1337,6 +1546,8 @@ void GameLoop_GameIntroAnimation(void)
 	Gameloop_Logos();
 #else
 	g_canSkipIntro = true;
+	Voice_LoadVoices(0xFFFF);
+	GameLoop_3DS_PlanetToTopTransition();
 	Input_History_Clear();
 #endif
 

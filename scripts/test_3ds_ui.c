@@ -67,6 +67,7 @@ const MapInfo g_mapInfos[3]={{1,1,62,62},{16,16,32,32},{21,21,21,21}};
 #include "../src/table/houseinfo.c"
 const XYSize g_table_structure_layoutSize[STRUCTURE_LAYOUT_MAX]={{1,1}};
 WindowDesc g_optionsWindowDesc;
+WindowDesc g_saveLoadWindowDesc;
 Scenario g_scenario;
 volatile uint32 g_timerGUI, g_timerGame;
 uint16 g_activeAction, g_structureActiveType, g_selectionRectanglePosition, g_factoryWindowOrdered;
@@ -86,11 +87,12 @@ Structure *Structure_Get_ByIndex(uint16 i) {(void)i; return NULL;}
 bool Structure_IsUpgradable(Structure *s) {(void)s; return false;}
 bool Structure_SetRepairingState(Structure *s,int8 v,Widget *w) {(void)s;(void)v;(void)w;return false;}
 bool Structure_SetUpgradingState(Structure *s,int8 v,Widget *w) {(void)s;(void)v;(void)w;return false;}
-static int smartOrders, executedAction=-1;
+static int smartOrders, executedAction=-1, cycledCategory=-1;
 static Structure *selectedStructure;
 void Unit_3DS_CancelPlacement(void) {}
 void Unit_3DS_ExecuteUnitAction(ActionType a) {executedAction=a;}
 Structure *Unit_3DS_GetSelectedStructure(void) {return selectedStructure;}
+void Unit_3DS_CycleStructureType(int c) {cycledCategory=c;}
 void Unit_3DS_SmartAction(uint16 p) {(void)p;smartOrders++;}
 void Unit_3DS_IssueCommand(ActionType a,uint16 p) {(void)a;(void)p;}
 bool Unit_3DS_OpenFactory(Structure *s) {(void)s;return false;}
@@ -169,10 +171,13 @@ int main(void)
 		uint8 planetFixture[320*200];
 		memset(planetFixture, 0, sizeof(planetFixture));
 		planetFixture[10*320+10] = 88;
+		memset(screens[1], 0, sizeof(screens[1]));
+		screens[1][25*320+25] = 199;
 		GUI_3DS_SetPlanetBackground(planetFixture);
+		GUI_3DS_RenderTopScreen();
 		GUI_3DS_RenderBottomScreen();
-		assert(g_bottomScreenBuffer[(20+10)*320+10]==88);
-		assert(g_bottomScreenUIMask[(20+10)*320+10]==0);
+		assert(g_topScreenBuffer[(20+10)*400+(40+10)]==88);
+		assert(g_topScreenBuffer[(20+25)*400+(40+25)]==199);
 		assert(g_bottomScreenUIMask[80*320+30]==2);
 		GUI_3DS_SetPlanetBackground(NULL);
 	}
@@ -244,10 +249,10 @@ int main(void)
     g_table_unitInfo[0].o.actionsPlayer[3]=ACTION_GUARD;
     unit.actionID=ACTION_GUARD;
     GUI_3DS_RenderBottomScreen();
-    assert(g_bottomScreenUIMask[39*320+181]==TACTICAL_UI_MASK);
-    assert(g_bottomScreenBuffer[40*320+181]==TC_LIGHT);
-    assert(g_bottomScreenBuffer[225*320+250]==TC_FACE);
-    assert(g_bottomScreenUIMask[65*320+190]==0); /* Original portrait palette. */
+    assert(g_bottomScreenUIMask[40*320+170]==TACTICAL_UI_MASK);
+    assert(g_bottomScreenBuffer[40*320+170]==TC_LIGHT);
+    assert(g_bottomScreenBuffer[230*320+250]==screens[0][120*320+246]); /* Bottom horizontal barber-pole strip. */
+    assert(g_bottomScreenUIMask[65*320+185]==0); /* Original portrait palette. */
     assert(g_bottomScreenBuffer[10*320+10]==screens[0][10*320+10]); /* Header unchanged. */
     assert(g_bottomScreenBuffer[100*320+160]==screens[0][100*320+246]); /* Divider unchanged. */
     assert(s_panelHitCount==4 && s_panelHits[1].kind==HIT_SMART_ORDER);
@@ -257,20 +262,22 @@ int main(void)
     GUI_3DS_HandleBottomTouch(250,182); assert(executedAction==ACTION_RETREAT);
     GUI_3DS_HandleBottomTouch(250,208); assert(executedAction==ACTION_GUARD);
     /* Completing the first placement can leave no selection while a hint is shown.
-     * Cream must replace the previous unit's black button gutters on every frame. */
+     * Empty panel shows power bar + two large buttons (Select All Units & Jump to Base). */
     g_unitSelected=NULL; g_selectedUnitsCount=0;
     g_selectionType=SELECTIONTYPE_STRUCTURE;
     for(int frame=0;frame<2;frame++) {
      if(frame==0) { GUI_3DS_RenderBottomScreen(); GUI_3DS_BeginMessage("Construction completed"); }
      else GUI_3DS_EndMessage();
      GUI_3DS_RenderBottomScreen();
-     if(frame==1) assert(g_bottomScreenBuffer[130*320+184]==TC_FACE);
-     if(frame==1) assert(g_bottomScreenBuffer[190*320+200]==TC_FACE);
-     if(frame==1) assert(g_bottomScreenUIMask[130*320+184]==TACTICAL_UI_MASK);
+     if(frame==1) assert(g_bottomScreenBuffer[88*320+184]==TC_FACE);
+     if(frame==1) assert(g_bottomScreenUIMask[88*320+184]==TACTICAL_UI_MASK);
     }
-    assert(g_bottomScreenBuffer[204*320+184]==TC_BLACK); /* Select All keeps its gutter. */
+    assert(g_bottomScreenBuffer[116*320+174]==TC_BLACK); /* Select All Units keeps its black frame. */
+    assert(g_bottomScreenBuffer[168*320+174]==TC_BLACK); /* Jump to Base keeps its black frame. */
+    cycledCategory=-1;
+    GUI_3DS_HandleBottomTouch(245,195); assert(cycledCategory==0);
     Preview("empty-panel");
-    /* Buildings have the same header, Repair at 118 and a production block at 144. */
+    /* Buildings have the same header, Repair at 120 and a production block at 146. */
     Structure yard={0}; yard.o.type=STRUCTURE_CONSTRUCTION_YARD;
     yard.o.flags.s.allocated=true; yard.o.linkedID=STRUCTURE_INVALID;
     yard.o.houseID=g_playerHouseID; yard.o.hitpoints=100; yard.objectType=STRUCTURE_WINDTRAP;
@@ -282,14 +289,14 @@ int main(void)
     g_selectionType=SELECTIONTYPE_STRUCTURE;
     GUI_3DS_RenderBottomScreen();
     assert(s_panelHitCount==3 && s_panelHits[1].kind==HIT_REPAIR && s_panelHits[2].kind==HIT_PRIMARY);
-    assert(s_panelHits[2].y==144 && s_panelHits[2].h==76);
-    assert(g_bottomScreenUIMask[151*320+193]==0); /* Original production portrait. */
+    assert(s_panelHits[2].y==146 && s_panelHits[2].h==76);
+    assert(g_bottomScreenUIMask[155*320+193]==0); /* Original production portrait. */
     Preview("figma-building");
     /* Larger original sprites must stay inside the portrait slot. */
     fixtureWidth=fixtureHeight=64;
     GUI_3DS_RenderBottomScreen();
     assert(g_bottomScreenUIMask[114*320+254]==TACTICAL_UI_MASK);
-    assert(g_bottomScreenBuffer[118*320+185]==TC_LIGHT);
+    assert(g_bottomScreenBuffer[120*320+174]==TC_LIGHT);
     fixtureWidth=32; fixtureHeight=24;
     /* Native FNT decoding is used when available, including glyph top padding. */
     FontChar glyphs[128]={0}; uint8 pixels[4]={1,2,3,1};
@@ -308,8 +315,8 @@ int main(void)
     assert(g_bottomScreenBuffer[102*320+200]==TC_WHITE);
     assert(g_bottomScreenBuffer[103*320+202]==TC_WHITE);
     assert(g_bottomScreenBuffer[101*320+202]==TC_FACE); /* Outline remains transparent. */
-    BattleButton(185,170,131,24,"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",false,false);
-    assert(g_bottomScreenBuffer[170*320+185]==TC_LIGHT); /* Text stays inside the bevel. */
+    BattleButton(174,170,142,24,"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",false,false);
+    assert(g_bottomScreenBuffer[170*320+174]==TC_LIGHT); /* Text stays inside the bevel. */
     g_fontNew8p=NULL;
     selectedStructure=NULL;
     /* Groups show up to twelve cards, with overflow replacing only the final one. */
@@ -321,12 +328,12 @@ int main(void)
     }
     g_selectedUnitsCount=12; g_unitSelected=&squad[0]; g_selectionType=SELECTIONTYPE_UNIT;
     GUI_3DS_RenderBottomScreen(); assert(s_panelHitCount==12);
-    assert(s_panelHits[11].x==273 && s_panelHits[11].y==190);
-    GUI_3DS_HandleBottomTouch(248,80); assert(individualSelection==&squad[1]);
+    assert(s_panelHits[11].x==269 && s_panelHits[11].y==183);
+    GUI_3DS_HandleBottomTouch(235,80); assert(individualSelection==&squad[1]);
     g_selectedUnitsCount=22; GUI_3DS_RenderBottomScreen(); assert(s_panelHitCount==11);
-    assert(g_bottomScreenBuffer[(64+32)*320+187]==TC_RED); /* Per-unit health. */
+    assert(g_bottomScreenBuffer[(60+32)*320+179]==TC_RED); /* Per-unit health. */
     Preview("squad-overflow");
-    individualSelection=NULL; GUI_3DS_HandleBottomTouch(294,210); assert(individualSelection==NULL);
+    individualSelection=NULL; GUI_3DS_HandleBottomTouch(294,200); assert(individualSelection==NULL);
     squad[1].o.flags.s.allocated=false;
     GUI_3DS_RenderBottomScreen(); assert(s_panelHits[1].param==102); /* Dead entry skipped. */
     g_unitSelected=NULL; g_selectedUnitsCount=0;
@@ -423,16 +430,33 @@ int main(void)
     g_timerGUI=115;Input_3DS_Poll();assert(visibleSelections==1 && recalls==1);
     g_timerGUI=160;Input_3DS_Poll();assert(visibleSelections==2 && recalls==1);
     test_keys_down=0;g_selectedUnitsCount=0;
-    /* Result screens always keep a bottom Continue control and route A to HOF widgets. */
+    /* Result screens always keep a bottom Back/Continue control and route A/B to HOF Resume widget. */
     GUI_3DS_SetResultsActive(true);GUI_3DS_RenderBottomScreen();
     assert(g_bottomScreenUIMask[160*320+40]==2);
     Widget resultButtons[2]={0};resultButtons[0].index=100;resultButtons[0].next=&resultButtons[1];resultButtons[1].index=101;
     for(int i=0;i<2;i++) {resultButtons[i].width=100;resultButtons[i].height=10;}
     GUI_3DS_SetResultsButtons(resultButtons);
+    GUI_3DS_RenderBottomScreen();
+    assert(g_bottomScreenBuffer[210*320+50]==0); /* No Clear list button on bottom screen. */
     GUI_3DS_MenuInput(0,0,true);assert(GUI_3DS_TakeDialogEvent(resultButtons)==0x8065);
-    GUI_3DS_MenuInput(0,1,true);assert(GUI_3DS_TakeDialogEvent(resultButtons)==0x8064);
+    assert(GUI_3DS_CancelMenu());assert(GUI_3DS_TakeDialogEvent(resultButtons)==0x8065);
     GUI_3DS_HandleBottomTouch(120,175);assert(GUI_3DS_TakeDialogEvent(resultButtons)==0x8065);
     GUI_3DS_SetResultsButtons(NULL);GUI_3DS_SetResultsActive(false);
+
+    /* 5-slot Save/Load window shows House Crest & Mission on top screen and dates on bottom screen. */
+    memset(screens[1], 77, sizeof(screens[1]));
+    GUI_3DS_CacheHeraldCrests(screens[1]);
+    GUI_3DS_SetSaveSlotInfo(0, false, HOUSE_ATREIDES, 1, "");
+    GUI_3DS_SetSaveSlotInfo(1, true, HOUSE_ORDOS, 4, "2026-11-07 17:30");
+    assert(!GUI_3DS_IsSaveSlotUsed(0) && GUI_3DS_IsSaveSlotUsed(1));
+    g_saveLoadWindowDesc.stringID = STR_SELECT_A_SAVED_GAME_TO_LOAD;
+    g_widgetLinkedListTail = buttons;
+    GUI_3DS_SetWindow(&g_saveLoadWindowDesc);
+    GUI_3DS_RenderTopScreen();
+    GUI_3DS_RenderBottomScreen();
+    assert(g_topScreenBuffer[60*400+20]==77 && g_topScreenUIMask[60*400+20]==0); /* 2x House crest drawn on top screen. */
+    g_widgetLinkedListTail = NULL;
+    GUI_3DS_SetWindow(NULL);
     /* A modal must preserve both the battlefield image and its palette across frames. */
     GUI_3DS_RenderTopScreen();GUI_3DS_RenderBottomScreen();
     uint8 topPixel=g_topScreenBuffer[40*400+100],topMask=g_topScreenUIMask[40*400+100];

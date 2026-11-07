@@ -95,6 +95,10 @@ void GUI_3DS_SetPlanetBackground(const uint8 *pixels320x200)
 		s_planetBgValid = false;
 	}
 }
+const uint8 *GUI_3DS_GetPlanetBackground(void)
+{
+	return s_planetBgValid ? s_planetBg : NULL;
+}
 uint16 GUI_3DS_TakeHouseChoice(void)
 {
 	uint16 result = s_houseChoice;
@@ -719,6 +723,44 @@ bool GUI_3DS_IsMentatButton(const struct Widget *w)
 static uint8 s_pauseSnapshot[TOP_WIDTH * TOP_HEIGHT];
 static bool s_pauseValid = false;
 
+typedef struct SaveSlotMeta3DS {
+	bool   used;
+	uint8  houseID;
+	uint16 mission;
+	char   dateStr[51];
+} SaveSlotMeta3DS;
+
+static SaveSlotMeta3DS s_saveSlots[5];
+static uint8 s_heraldCrests[3][84 * 64];
+static bool s_heraldCrestsValid = false;
+
+void GUI_3DS_SetSaveSlotInfo(int slot, bool used, uint8 houseID, uint16 mission, const char *dateStr)
+{
+	if (slot < 0 || slot >= 5) return;
+	s_saveSlots[slot].used = used;
+	s_saveSlots[slot].houseID = (houseID < HOUSE_MAX) ? houseID : HOUSE_ATREIDES;
+	s_saveSlots[slot].mission = clamp(mission, 1, 9);
+	snprintf(s_saveSlots[slot].dateStr, sizeof(s_saveSlots[slot].dateStr), "%s", dateStr ? dateStr : "");
+}
+
+bool GUI_3DS_IsSaveSlotUsed(int slot)
+{
+	return (slot >= 0 && slot < 5) && s_saveSlots[slot].used;
+}
+
+void GUI_3DS_CacheHeraldCrests(const uint8 *herald320x200)
+{
+	if (herald320x200 == NULL) return;
+	for (int i = 0; i < 3; i++) {
+		int srcBaseX = 18 + i * 96;
+		int srcBaseY = 54;
+		for (int cy = 0; cy < 64; cy++) {
+			memcpy(s_heraldCrests[i] + cy * 84, herald320x200 + (srcBaseY + cy) * SCREEN_WIDTH + srcBaseX, 84);
+		}
+	}
+	s_heraldCrestsValid = true;
+}
+
 void GUI_3DS_SetWindow(struct WindowDesc *window)
 {
 	/* Keep the last battlefield frame so the top screen can show a paused view behind menus. */
@@ -729,6 +771,14 @@ void GUI_3DS_SetWindow(struct WindowDesc *window)
 	s_dialogWindow = window;
 	s_dialogChosen = NULL;
 	s_dialogFocus = 0;
+	if (window == &g_saveLoadWindowDesc && window->stringID == STR_SELECT_A_SAVED_GAME_TO_LOAD) {
+		for (int i = 0; i < 5; i++) {
+			if (s_saveSlots[i].used) {
+				s_dialogFocus = i;
+				break;
+			}
+		}
+	}
 }
 
 uint16 GUI_3DS_TakeDialogEvent(Widget *head)
@@ -1010,6 +1060,36 @@ bool GUI_3DS_CustomMenuActive(void)
 	return s_resultsButtons != NULL || g_3dsMentatHelpActive || s_mentatButtons != NULL || CustomDialog() || GUI_3DS_IsTitleMenu() || g_3dsHousePickerActive || GUI_3DS_IsFactoryWindow();
 }
 
+bool GUI_3DS_CancelMenu(void)
+{
+	if (g_3dsModalMessageActive) return false;
+	if (s_resultsButtons != NULL && !CustomDialog()) {
+		for (Widget *w = s_resultsButtons; w != NULL; w = w->next) {
+			if (w->index == 101) {
+				s_dialogChosen = w;
+				return true;
+			}
+		}
+		s_dialogChosen = s_resultsButtons;
+		return true;
+	}
+	if (CustomDialog()) {
+		Widget *items[9];
+		int count = DialogItems(items);
+		if (count <= 0) return false;
+		for (int i = count - 1; i >= 0; i--) {
+			int16 sid = items[i]->stringID;
+			if (sid == STR_CANCEL || sid == STR_CONTINUE_GAME || sid == STR_PREVIOUS || sid == STR_NO || items[i]->index == 0x23 || items[i]->index == 0x1F) {
+				s_dialogChosen = items[i];
+				return true;
+			}
+		}
+		s_dialogChosen = items[count - 1];
+		return true;
+	}
+	return false;
+}
+
 void GUI_3DS_MenuInput(int dx, int dy, bool confirm)
 {
  if(g_3dsMentatHelpActive && !s_mentatButtons) {
@@ -1019,9 +1099,11 @@ void GUI_3DS_MenuInput(int dx, int dy, bool confirm)
   return;
  }
  if(s_resultsButtons && !CustomDialog()) {
-  Widget *items[9]; int count=DialogItems(items); if(!count) return;
-  s_dialogFocus=(s_dialogFocus+dx+dy+count)%count;
-  if(confirm) { for(int i=0;i<count;i++) if(items[i]->index==(s_dialogFocus==0 ? 101 : 100)) s_dialogChosen=items[i]; }
+  s_dialogFocus = 0;
+  if(confirm) {
+   for(Widget *w=s_resultsButtons;w;w=w->next) if(w->index==101) s_dialogChosen=w;
+   if(!s_dialogChosen) s_dialogChosen=s_resultsButtons;
+  }
   return;
  }
 
@@ -1169,11 +1251,15 @@ static void DialogBottom(void)
 		if (s_dialogWindow == &g_optionsWindowDesc && items[i]->stringID == STR_CONTINUE_GAME && label) {
 			snprintf(combined, sizeof(combined), "%.28s (B)", label);
 			label = combined;
+		} else if (items[i]->stringID == STR_CANCEL || items[i]->index == 0x23) {
+			snprintf(combined, sizeof(combined), "%s", L10N("Back (B)", "Atgal (B)"));
+			label = combined;
 		}
 		if (label == NULL) continue;
 
 		bool selected = (i == s_dialogFocus);
-		MenuButton(12,y,296,step-3,label,selected,false);
+		bool dim = (s_dialogWindow != NULL && s_dialogWindow->stringID == STR_SELECT_A_SAVED_GAME_TO_LOAD && i < 5 && !s_saveSlots[i].used);
+		MenuButton(12,y,296,step-3,label,selected,dim);
 	}
 }
 
@@ -1385,6 +1471,7 @@ void GUI_3DS_RenderTopScreen(void)
 
 		uint8 *herald = GFX_Screen_Get_ByIndex(SCREEN_1);
 		if (herald == NULL) herald = src;
+		if (herald != NULL) GUI_3DS_CacheHeraldCrests(herald);
 		int focus = clamp(s_houseFocus, 0, 2);
 
 		/* Extract focused House crest square (84x64 at srcX = 18 + focus*96, srcY = 54) and scale 2x (168x128) */
@@ -1453,24 +1540,28 @@ void GUI_3DS_RenderTopScreen(void)
 		return;
 	}
 
-	/* 2. Title Screen: show clean Dune 2 title artwork on top screen */
+	/* 2. Title Screen: show planet background with Dune 2 title artwork overlaid on top screen */
 	if (GUI_3DS_IsTitleMenu()) {
 		memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
+		int offsetX = (TOP_WIDTH - SCREEN_WIDTH) / 2;   /* 40 */
+		int offsetY = (TOP_HEIGHT - SCREEN_HEIGHT) / 2; /* 20 */
+		if (s_planetBgValid) {
+			for (int y = 0; y < SCREEN_HEIGHT; y++) {
+				const uint8 *pRow = s_planetBg + y * SCREEN_WIDTH;
+				uint8 *dstRow = g_topScreenBuffer + (offsetY + y) * TOP_WIDTH + offsetX;
+				for (int x = 0; x < SCREEN_WIDTH; x++) {
+					if (pRow[x] != 0) dstRow[x] = pRow[x];
+				}
+			}
+		}
 		uint8 *art = GFX_Screen_Get_ByIndex(SCREEN_1);
 		if (art == NULL) art = src;
 		if (art != NULL) {
-			int offsetX = (TOP_WIDTH - SCREEN_WIDTH) / 2;   /* 40 */
-			int offsetY = (TOP_HEIGHT - SCREEN_HEIGHT) / 2; /* 20 */
 			for (int y = 0; y < SCREEN_HEIGHT; y++) {
-				memcpy(g_topScreenBuffer + ((offsetY + y) * TOP_WIDTH + offsetX), art + y * SCREEN_WIDTH, SCREEN_WIDTH);
-			}
-		}
-		if (s_planetBgValid) {
-			for (int i = 0; i < 48; i++) {
-				int sx = (int)((i * 97u + 23u) % TOP_WIDTH);
-				int sy = (int)((i * 53u + 11u) % TOP_HEIGHT);
-				if (g_topScreenBuffer[sy * TOP_WIDTH + sx] == 0) {
-					g_topScreenBuffer[sy * TOP_WIDTH + sx] = (i & 3) == 0 ? 15 : ((i & 1) ? 14 : 13);
+				const uint8 *aRow = art + y * SCREEN_WIDTH;
+				uint8 *dstRow = g_topScreenBuffer + (offsetY + y) * TOP_WIDTH + offsetX;
+				for (int x = 0; x < SCREEN_WIDTH; x++) {
+					if (aRow[x] != 0) dstRow[x] = aRow[x];
 				}
 			}
 		}
@@ -1480,6 +1571,50 @@ void GUI_3DS_RenderTopScreen(void)
 	if (GUI_3DS_IsFactoryWindow()) { FactoryTop(); return; }
 
 	if (CustomDialog()) {
+		if (s_dialogWindow != NULL && (s_dialogWindow->stringID == STR_SELECT_A_SAVED_GAME_TO_LOAD || s_dialogWindow->stringID == STR_SELECT_A_POSITION_TO_SAVE_TO)) {
+			memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
+			memset(g_topScreenUIMask, 2, sizeof(g_topScreenUIMask));
+			int slot = s_dialogFocus;
+			if (slot >= 0 && slot < 5 && s_saveSlots[slot].used) {
+				uint8 hID = s_saveSlots[slot].houseID;
+				int crestIdx = (hID == HOUSE_ATREIDES) ? 0 : ((hID == HOUSE_ORDOS) ? 1 : 2);
+				static const char *hNames[3] = {"Atreides", "Ordos", "Harkonnen"};
+				if (s_heraldCrestsValid) {
+					int dstBaseX = 14;
+					int dstBaseY = (TOP_HEIGHT - 64 * 2) / 2; /* 56 */
+					for (int cy = 0; cy < 64; cy++) {
+						const uint8 *srcRow = s_heraldCrests[crestIdx] + cy * 84;
+						for (int cx = 0; cx < 84; cx++) {
+							uint8 px = srcRow[cx];
+							int dx = dstBaseX + cx * 2;
+							int dy = dstBaseY + cy * 2;
+							g_topScreenBuffer[dy * TOP_WIDTH + dx] = px;
+							g_topScreenBuffer[dy * TOP_WIDTH + dx + 1] = px;
+							g_topScreenBuffer[(dy + 1) * TOP_WIDTH + dx] = px;
+							g_topScreenBuffer[(dy + 1) * TOP_WIDTH + dx + 1] = px;
+							g_topScreenUIMask[dy * TOP_WIDTH + dx] = 0;
+							g_topScreenUIMask[dy * TOP_WIDTH + dx + 1] = 0;
+							g_topScreenUIMask[(dy + 1) * TOP_WIDTH + dx] = 0;
+							g_topScreenUIMask[(dy + 1) * TOP_WIDTH + dx + 1] = 0;
+						}
+					}
+					int bottomCoverY = dstBaseY + 64 * 2 - 2;
+					if (bottomCoverY < TOP_HEIGHT) {
+						memset(g_topScreenBuffer + bottomCoverY * TOP_WIDTH, 0, (TOP_HEIGHT - bottomCoverY) * TOP_WIDTH);
+					}
+				}
+				GUI_3DS_DrawIntroFontText(g_topScreenBuffer, TOP_WIDTH, 198, 72, hNames[crestIdx], 119, 112);
+				char missionLine[64];
+				snprintf(missionLine, sizeof(missionLine), L10N("Mission %u", "Misija %u"), (unsigned)s_saveSlots[slot].mission);
+				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 198, 108, missionLine, 15);
+				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 198, 128, s_saveSlots[slot].dateStr, 110);
+			} else if (slot >= 0 && slot < 5) {
+				const char *emptyStr = L10N("Empty Slot", "Tuscia vieta");
+				int ew = (int)strlen(emptyStr) * 8;
+				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, (TOP_WIDTH - ew) / 2, 116, emptyStr, 110);
+			}
+			return;
+		}
 		/* Keep top screen clean during dialog: no yellow background or extra UI! */
 		if (g_gameMode != GM_NORMAL) {
 			memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
@@ -1627,7 +1762,7 @@ static const char *GUI_3DS_GetActionLabel(uint16 action)
  * Original-style Dune II action panel (bottom-right of the bottom screen)
  * ========================================================================= */
 
-enum { HIT_PORTRAIT = 1, HIT_UNIT_ACTION, HIT_CANCEL, HIT_PLACE_HERE, HIT_CONFIRM, HIT_REPAIR, HIT_PRIMARY, HIT_UPGRADE, HIT_SMART_ORDER, HIT_SQUAD_UNIT };
+enum { HIT_PORTRAIT = 1, HIT_UNIT_ACTION, HIT_CANCEL, HIT_PLACE_HERE, HIT_CONFIRM, HIT_REPAIR, HIT_PRIMARY, HIT_UPGRADE, HIT_SMART_ORDER, HIT_SQUAD_UNIT, HIT_JUMP_BASE };
 
 typedef struct PanelHit {
 	int16  x, y, w, h;
@@ -1711,14 +1846,14 @@ static void BattleButton(int x,int y,int w,int h,const char *label,bool active,b
 {
   uint8 *buf=g_bottomScreenBuffer;
   const int t=2; /* border thickness */
-  GUI_3DS_FillRect(buf,320,x-1,y-1,x+w,y+h,TC_BLACK);
+  GUI_3DS_FillRect(buf,320,x-2,y-2,x+w+1,y+h+1,TC_BLACK);
   GUI_3DS_FillRect(buf,320,x,y,x+w-1,y+h-1,TC_FACE);
   GUI_3DS_FillRect(buf,320,x,y,x+w-1-t,y+t-1,TC_LIGHT);             /* top #FAFFC5 */
   GUI_3DS_FillRect(buf,320,x,y,x+t-1,y+h-1-t,TC_LIGHT);             /* left #FAFFC5 */
   GUI_3DS_FillRect(buf,320,x+t,y+h-t,x+w-1,y+h-1,TC_SHADOW);        /* bottom #65654B */
   GUI_3DS_FillRect(buf,320,x+w-t,y+t,x+w-1,y+h-1,TC_SHADOW);        /* right #65654B */
-  for (int py = max(0, y - 1); py <= min(239, y + h); py++) {
-    memset(g_bottomScreenUIMask + py * 320 + max(0, x - 1), TACTICAL_UI_MASK, min(320, x + w + 1) - max(0, x - 1));
+  for (int py = max(0, y - 2); py <= min(239, y + h + 1); py++) {
+    memset(g_bottomScreenUIMask + py * 320 + max(0, x - 2), TACTICAL_UI_MASK, min(320, x + w + 2) - max(0, x - 2));
   }
   const char *shown=label ? label : "";
   BattleButtonLabel(x,y,w,h,shown,dim ? TC_SHADOW : active ? TC_ACTIVE : TC_WHITE);
@@ -1746,13 +1881,13 @@ static void BattlePortrait(int x,int y,int width,int height,uint16 spriteID)
 	for (int row = 0; row < sh; row++) memcpy(scratch + row * 320, saved + row * sw, sw);
 }
 
-static void PanelDamageBar(int x,int y,int w,int h,uint32 hp,uint32 maxHP)
+static void PanelMeterBar(int x,int y,int w,int h,uint32 val,uint32 maxVal,const char *caption,int captionY,uint8 captionColor)
 {
  uint8 *buf=g_bottomScreenBuffer;
  GUI_3DS_FillRect(buf,320,x,y,x+w-1,y+h-1,TC_SHADOW);
  GUI_3DS_FillRect(buf,320,x+2,y+2,x+w-3,y+h-3,TC_FACE);
- int fill=maxHP ? min(w-4,(int)((uint64_t)hp*(w-4)/maxHP)) : 0;
- uint8 color=hp<=maxHP/4 ? TC_RED : hp<=maxHP/2 ? TC_YELLOW : TC_GREEN;
+ int fill=maxVal ? min(w-4,(int)((uint64_t)val*(w-4)/maxVal)) : 0;
+ uint8 color=val<=maxVal/4 ? TC_RED : val<=maxVal/2 ? TC_YELLOW : TC_GREEN;
  if(fill) GUI_3DS_FillRect(buf,320,x+2,y+2,x+1+fill,y+h-3,color);
  GUI_3DS_FillRect(buf,320,x,y,x+w-1,y+1,TC_LIGHT);
  GUI_3DS_FillRect(buf,320,x,y+2,x+1,y+h-1,TC_LIGHT);
@@ -1764,7 +1899,12 @@ static void PanelDamageBar(int x,int y,int w,int h,uint32 hp,uint32 maxHP)
   GUI_3DS_FillRect(buf,320,mx,my+2,mx+5,my+3,colors[i]);
   GUI_3DS_FillRect(buf,320,mx,my+4,mx+7,my+5,TC_BLACK);
  }
- Tiny5_DrawText(buf,320,x+w/2,104,"DMG",TC_TEXT,false);
+ if(caption && *caption) Tiny5_DrawText(buf,320,x+w/2,captionY,caption,captionColor,false);
+}
+
+static void PanelDamageBar(int x,int y,int w,int h,uint32 hp,uint32 maxHP)
+{
+ PanelMeterBar(x,y,w,h,hp,maxHP,"DMG",104,TC_TEXT);
 }
 
 static void PanelHeader(const char *title,uint16 spriteID,bool isUnit)
@@ -1776,9 +1916,9 @@ static void PanelHeader(const char *title,uint16 spriteID,bool isUnit)
   upper[i]=(c>='a' && c<='z') ? (c-'a'+'A') : c;
  }
  upper[i]='\0';
- Tiny5_DrawText(g_bottomScreenBuffer,320,250,54,upper,TC_TEXT,false);
- BattlePortrait(185,63,69,53,spriteID);
- PanelAddHit(183,61,73,55,HIT_PORTRAIT,0);
+ Tiny5_DrawText(g_bottomScreenBuffer,320,245,54,upper,TC_TEXT,false);
+ BattlePortrait(178,61,69,53,spriteID);
+ PanelAddHit(176,59,73,55,HIT_PORTRAIT,0);
 }
 
 static const char *PanelActionKey(uint16 action)
@@ -1801,7 +1941,7 @@ static void BattleProgress(int pct)
 {
  int filled=clamp(pct*9/100,0,9);
  for(int row=0;row<3;row++) for(int col=0;col<3;col++) {
-  int x=261+col*15,y=150+row*15;
+  int x=256+col*15,y=152+row*15;
   GUI_3DS_PutPixel(g_bottomScreenBuffer,320,x,y,TC_DOT);
   for(int d=5;d<=10;d+=5) { GUI_3DS_PutPixel(g_bottomScreenBuffer,320,x+d,y,TC_DOT); GUI_3DS_PutPixel(g_bottomScreenBuffer,320,x,y+d,TC_DOT); }
   if(row*3+col<filled) {
@@ -1836,15 +1976,15 @@ static void PanelStructureStatusBox(Structure *s,const StructureInfo *si)
  else if(s->o.type==STRUCTURE_PALACE) action=s->countDown ? L10N("CHARGING","KRAUNASI") : L10N("LAUNCH (Y)","PALEISTI (Y)");
  else if(!info->flags.factory) action=L10N("SELECT ALL (X)","VISI KARIAI (X)");
  snprintf(label,sizeof(label),"%s",action);
-	BattleButton(185, 144, 131, 76, "", false, false);
-	BattlePortrait(189, 148, 66, 51, sprite);
+	BattleButton(174, 146, 142, 76, "", false, false);
+	BattlePortrait(180, 150, 66, 51, sprite);
 	BattleProgress(pct);
 	if (building || s->o.flags.s.upgrading) {
 		snprintf(pctLabel, sizeof(pctLabel), s->o.flags.s.onHold ? "HOLD" : "%d%%", pct);
-		BattleText(283, 192, pctLabel, g_fontNew6p, TC_TEXT, false);
+		BattleText(278, 194, pctLabel, g_fontNew6p, TC_TEXT, false);
 	}
-	BattleButtonLabel(185, 198, 131, 22, label, (building && s->o.flags.s.onHold) ? TC_SHADOW : ready ? TC_ACTIVE : TC_WHITE);
-	if (mine) PanelAddHit(185, 144, 131, 76, HIT_PRIMARY, 0);
+	BattleButtonLabel(174, 200, 142, 22, label, (building && s->o.flags.s.onHold) ? TC_SHADOW : ready ? TC_ACTIVE : TC_WHITE);
+	if (mine) PanelAddHit(174, 146, 142, 76, HIT_PRIMARY, 0);
 }
 
 static bool DrawSquadPanel(void)
@@ -1856,26 +1996,25 @@ static bool DrawSquadPanel(void)
  }
  if(count<=1) return false;
  char title[32]; snprintf(title,sizeof(title),L10N("UNITS: %d","KARIAI: %d"),count);
- BattleText(250,46,title,g_fontNew8p,TC_TEXT,false);
- GUI_3DS_FillRect(g_bottomScreenBuffer,320,183,61,317,237,TC_FACE);
+ BattleText(245,46,title,g_fontNew8p,TC_TEXT,false);
  int visible=count>12 ? 11 : count;
  for(int i=0;i<min(count,12);i++) {
-  int x=185+(i%3)*44, y=64+(i/3)*42;
-  GUI_3DS_FillRect(g_bottomScreenBuffer,320,x,y,x+41,y+38,TC_BLACK);
+  int x=177+(i%3)*46, y=60+(i/3)*41;
+  GUI_3DS_FillRect(g_bottomScreenBuffer,320,x,y,x+43,y+38,TC_BLACK);
   if(i>=visible) {
    char more[16]; snprintf(more,sizeof(more),"+%d",count-visible);
-   GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+2,x+39,y+36,TC_FACE);
-   BattleText(x+21,y+13,more,g_fontNew8p,TC_TEXT,false);
+   GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+2,x+41,y+36,TC_FACE);
+   BattleText(x+22,y+13,more,g_fontNew8p,TC_TEXT,false);
    continue;
   }
   Unit *u=units[i];
-  BattlePortrait(x+2,y+2,38,28,g_table_unitInfo[u->o.type].o.spriteID);
+  BattlePortrait(x+2,y+2,40,28,g_table_unitInfo[u->o.type].o.spriteID);
   uint32 maxHP=g_table_unitInfo[u->o.type].o.hitpoints;
   uint8 color=u->o.hitpoints<=maxHP/4 ? TC_RED : u->o.hitpoints<=maxHP/2 ? TC_YELLOW : TC_GREEN;
-  int fill=maxHP ? min(38,(int)((uint32)u->o.hitpoints*38/maxHP)) : 0;
-  GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+32,x+39,y+36,TC_SHADOW);
+  int fill=maxHP ? min(40,(int)((uint32)u->o.hitpoints*40/maxHP)) : 0;
+  GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+32,x+41,y+36,TC_SHADOW);
   if(fill) GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+32,x+1+fill,y+36,color);
-  PanelAddHit(x,y,42,39,HIT_SQUAD_UNIT,u->o.index);
+  PanelAddHit(x,y,44,39,HIT_SQUAD_UNIT,u->o.index);
  }
  return true;
 }
@@ -1885,11 +2024,12 @@ static void DrawActionPanel(void)
 	uint8 *buf = g_bottomScreenBuffer;
 	s_panelHitCount = 0;
 
-	/* Keep the full portrait area cream, with black gutters between buttons. */
-	GUI_3DS_FillRect(buf,320,170,40,180,239,0);
- GUI_3DS_FillRect(buf,320,181,39,319,239,TC_FACE);
- for(int y=39;y<240;y++) memset(g_bottomScreenUIMask+y*320+181,TACTICAL_UI_MASK,139);
- for(int inset=0;inset<2;inset++) GUI_3DS_DrawBevel(buf,320,181+inset,39+inset,319-inset,239-inset,TC_LIGHT,TC_SHADOW);
+	/* Tactical panel spans X: 170..319, Y: 40..223 directly adjacent to the left and bottom barber-pole columns.
+	 * Info area at the top has no black outer frame (drawn directly on the beveled cream background);
+	 * only buttons have a black frame around them. */
+	GUI_3DS_FillRect(buf, 320, 170, 40, 319, 223, TC_FACE);
+	for (int y = 40; y < 224; y++) memset(g_bottomScreenUIMask + y * 320 + 170, TACTICAL_UI_MASK, 150);
+	for (int inset = 0; inset < 2; inset++) GUI_3DS_DrawBevel(buf, 320, 170 + inset, 40 + inset, 319 - inset, 223 - inset, TC_LIGHT, TC_SHADOW);
 
 
 	/* ---- Structure placement ------------------------------------------------ */
@@ -1901,16 +2041,16 @@ static void DrawActionPanel(void)
 
 		const char *state = (g_selectionState > 0) ? L10N("OK", "TINKA") : ((g_selectionState < 0) ? L10N("NO SLABS", "BE PAMATO") : L10N("INVALID", "NETINKA"));
 		uint8 stateCol = (g_selectionState > 0) ? TC_DARK_GREEN : ((g_selectionState < 0) ? TC_TEXT : TC_RED);
-		BattleText(285, 76, state, g_fontNew6p, stateCol, false);
+		BattleText(282, 76, state, g_fontNew6p, stateCol, false);
 
-		BattleText(250, 118, L10N("SELECT LOCATION", "PASIRINKITE VIETA"), g_fontNew6p, TC_TEXT, false);
-		BattleText(250, 132, L10N("TO BUILD.", "STATYBAI."), g_fontNew6p, TC_TEXT, false);
-		BattleText(250, 150, L10N("D-PAD: SCROLL MAP", "D-PAD: ZEMELAPIS"), g_fontNew6p, TC_TEXT, false);
+		BattleText(245, 118, L10N("SELECT LOCATION", "PASIRINKITE VIETA"), g_fontNew6p, TC_TEXT, false);
+		BattleText(245, 132, L10N("TO BUILD.", "STATYBAI."), g_fontNew6p, TC_TEXT, false);
+		BattleText(245, 150, L10N("D-PAD: SCROLL MAP", "D-PAD: ZEMELAPIS"), g_fontNew6p, TC_TEXT, false);
 
-		BattleButton(185, 170, 131, 22, L10N("PLACE HERE (A)", "STATYTI (A)"), false, g_selectionState <= 0);
-		PanelAddHit(185, 170, 131, 22, HIT_PLACE_HERE, 0);
-		BattleButton(185, 196, 131, 22, L10N("CANCEL (B)", "ATSAUKTI (B)"), false, false);
-		PanelAddHit(185, 196, 131, 22, HIT_CANCEL, 0);
+		BattleButton(174, 172, 142, 22, L10N("PLACE HERE (A)", "STATYTI (A)"), false, g_selectionState <= 0);
+		PanelAddHit(174, 172, 142, 22, HIT_PLACE_HERE, 0);
+		BattleButton(174, 198, 142, 22, L10N("CANCEL (B)", "ATSAUKTI (B)"), false, false);
+		PanelAddHit(174, 198, 142, 22, HIT_CANCEL, 0);
 		return;
 	}
 
@@ -1919,12 +2059,12 @@ static void DrawActionPanel(void)
 		const char *actName = (g_unitHouseMissile != NULL) ? L10N("DEATH HAND", "MIRTIES RANKA") : GUI_3DS_GetActionLabel(g_activeAction);
 		uint16 sprite = (g_unitSelected != NULL) ? g_table_unitInfo[g_unitSelected->o.type].o.spriteID : 0;
 		PanelHeader(actName, sprite, true);
-		BattleText(250, 118, L10N("SELECT TARGET", "PASIRINKITE"), g_fontNew6p, TC_TEXT, false);
-		BattleText(250, 132, L10N("ON THE MAP.", "TAIKINI ZEMELAPY."), g_fontNew6p, TC_TEXT, false);
-		BattleButton(185, 170, 131, 22, L10N("CONFIRM (A)", "PATVIRTINTI (A)"), false, false);
-		PanelAddHit(185, 170, 131, 22, HIT_CONFIRM, 0);
-		BattleButton(185, 196, 131, 22, L10N("CANCEL (B)", "ATSAUKTI (B)"), false, false);
-		PanelAddHit(185, 196, 131, 22, HIT_CANCEL, 0);
+		BattleText(245, 118, L10N("SELECT TARGET", "PASIRINKITE"), g_fontNew6p, TC_TEXT, false);
+		BattleText(245, 132, L10N("ON THE MAP.", "TAIKINI ZEMELAPY."), g_fontNew6p, TC_TEXT, false);
+		BattleButton(174, 172, 142, 22, L10N("CONFIRM (A)", "PATVIRTINTI (A)"), false, false);
+		PanelAddHit(174, 172, 142, 22, HIT_CONFIRM, 0);
+		BattleButton(174, 198, 142, 22, L10N("CANCEL (B)", "ATSAUKTI (B)"), false, false);
+		PanelAddHit(174, 198, 142, 22, HIT_CANCEL, 0);
 		return;
 	}
 
@@ -1950,7 +2090,7 @@ static void DrawActionPanel(void)
 			snprintf(title, sizeof(title), "%.13s", String_Get_ByIndex(ui->o.stringID_abbrev));
 		}
 		PanelHeader(title, ui->o.spriteID, true);
-		PanelDamageBar(259, 63, 54, 20, hp, maxHP);
+		PanelDamageBar(256, 61, 56, 20, hp, maxHP);
 
         bool combat=false;
         for(int slot=0;slot<4;slot++) if(ui->o.actionsPlayer[slot]==ACTION_ATTACK) combat=true;
@@ -1959,12 +2099,12 @@ static void DrawActionPanel(void)
                               g_unitSelected->nextActionID==ACTION_ATTACK || g_unitSelected->nextActionID==ACTION_MOVE);
          bool isRetreat = (g_unitSelected->actionID==ACTION_RETREAT || g_unitSelected->nextActionID==ACTION_RETREAT);
          bool isGuard = (g_unitSelected->actionID==ACTION_GUARD || g_unitSelected->nextActionID==ACTION_GUARD);
-         BattleButton(185,118,131,50,L10N("ATTACK /\nMOVE (A)","PULTI /\nJUDETI (A)"),isAttackMove,false);
-         PanelAddHit(185,118,131,50,HIT_SMART_ORDER,0);
-         BattleButton(185,170,131,24,L10N("RETREAT (R)","ATSIKR. (R)"),isRetreat,false);
-         PanelAddHit(185,170,131,24,HIT_UNIT_ACTION,ACTION_RETREAT);
-         BattleButton(185,196,131,24,L10N("GUARD (Y)","SAUGOTI (Y)"),isGuard,false);
-         PanelAddHit(185,196,131,24,HIT_UNIT_ACTION,ACTION_GUARD);
+         BattleButton(174,118,142,50,L10N("ATTACK /\nMOVE (A)","PULTI /\nJUDETI (A)"),isAttackMove,false);
+         PanelAddHit(174,118,142,50,HIT_SMART_ORDER,0);
+         BattleButton(174,170,142,24,L10N("RETREAT (R)","ATSIKR. (R)"),isRetreat,false);
+         PanelAddHit(174,170,142,24,HIT_UNIT_ACTION,ACTION_RETREAT);
+         BattleButton(174,196,142,24,L10N("GUARD (Y)","SAUGOTI (Y)"),isGuard,false);
+         PanelAddHit(174,196,142,24,HIT_UNIT_ACTION,ACTION_GUARD);
         } else {
          /* Harvesters, MCVs and saboteurs retain their original commands. */
          for(int slot=0;slot<4;slot++) {
@@ -1984,8 +2124,8 @@ static void DrawActionPanel(void)
           } else {
            isActive = (g_unitSelected->actionID==action || g_unitSelected->nextActionID==action);
           }
-          BattleButton(185,118+slot*26,131,22,label,isActive,false);
-          PanelAddHit(185,118+slot*26,131,22,HIT_UNIT_ACTION,action);
+          BattleButton(174,118+slot*26,142,22,label,isActive,false);
+          PanelAddHit(174,118+slot*26,142,22,HIT_UNIT_ACTION,action);
          }
         }
 		return;
@@ -1998,28 +2138,37 @@ static void DrawActionPanel(void)
 		char title[32];
 		snprintf(title, sizeof(title), "%.13s", String_Get_ByIndex(si->o.stringID_abbrev));
 		PanelHeader(title, si->o.spriteID, false);
-		PanelDamageBar(259, 63, 54, 20, s->o.hitpoints, si->o.hitpoints);
+		PanelDamageBar(256, 61, 56, 20, s->o.hitpoints, si->o.hitpoints);
 		if (s->o.houseID == g_playerHouseID) {
 			bool repairing = s->o.flags.s.repairing;
-			BattleButton(185, 118, 131, 22, repairing ? L10N("REPAIRING (R)", "TAISOMA (R)") : L10N("REPAIR (R)", "TAISYTI (R)"), repairing, false);
-			PanelAddHit(185, 118, 131, 22, HIT_REPAIR, 0);
+			BattleButton(174, 120, 142, 22, repairing ? L10N("REPAIRING (R)", "TAISOMA (R)") : L10N("REPAIR (R)", "TAISYTI (R)"), repairing, false);
+			PanelAddHit(174, 120, 142, 22, HIT_REPAIR, 0);
 		}
 		PanelStructureStatusBox(s, si);
 		return;
 	}
 
-	/* ---- Nothing selected: the original shows an empty panel; keep short control hints ---- */
-	BattleText(250, 46, L10N("COMMAND", "VALDYMAS"), g_fontNew6p, TC_TEXT, false);
-	uint16 prod = (g_playerHouse != NULL) ? g_playerHouse->powerProduction : 0;
-	uint16 req  = (g_playerHouse != NULL) ? g_playerHouse->powerUsage : 0;
-	BattleText(250, 66, (prod >= req) ? L10N("POWER OK", "GALIA OK") : L10N("LOW POWER!", "MAZAI GALIOS!"), g_fontNew6p, (prod >= req) ? TC_TEXT : TC_RED, false);
-	BattleText(250, 100, L10N("A: GO / HOLD=BOX", "A: EITI / LAIKYTI=RAM"), g_fontNew6p, TC_TEXT, false);
-	BattleText(250, 120, L10N("Y: GUARD / BUILD", "Y: SAUGA / GAMYBA"), g_fontNew6p, TC_TEXT, false);
-	BattleText(250, 140, L10N("X: SELECT ALL", "X: VISI KARIAI"), g_fontNew6p, TC_TEXT, false);
-	BattleText(250, 160, L10N("R: RETREAT / REP", "R: TRAUKT. / TAIS"), g_fontNew6p, TC_TEXT, false);
-	BattleText(250, 180, L10N("SELECT: FACTORY", "SELECT: GAMYKLA"), g_fontNew6p, TC_TEXT, false);
-	BattleButton(185, 196, 131, 22, L10N("SELECT ALL (X)", "VISI KARIAI (X)"), false, false);
-	PanelAddHit(185, 196, 131, 22, HIT_PRIMARY, 0);
+	/* ---- Nothing selected: Power bar + "POWER OK"/"POWER LOW" + two large buttons ---- */
+	{
+		uint16 prod = (g_playerHouse != NULL) ? g_playerHouse->powerProduction : 0;
+		uint16 req  = (g_playerHouse != NULL) ? g_playerHouse->powerUsage : 0;
+		uint32 barVal = 100, barMax = 100;
+		if (req > 0) {
+			barVal = prod;
+			barMax = max((uint16)prod, req);
+		} else if (prod == 0) {
+			barVal = 100;
+			barMax = 100;
+		}
+		bool powerOk = (prod >= req);
+		const char *powerStr = powerOk ? L10N("POWER OK", "GALIA OK") : L10N("POWER LOW", "MAZAI GALIOS");
+		PanelMeterBar(217, 55, 56, 20, barVal, barMax, powerStr, 96, powerOk ? TC_TEXT : TC_RED);
+
+		BattleButton(174, 118, 142, 50, L10N("SELECT ALL\nUNITS (X)", "VISI\nKARIAI (X)"), false, false);
+		PanelAddHit(174, 118, 142, 50, HIT_PRIMARY, 0);
+		BattleButton(174, 170, 142, 50, L10N("JUMP TO BASE\n(SELECT)", "I BAZE\n(SELECT)"), false, false);
+		PanelAddHit(174, 170, 142, 50, HIT_JUMP_BASE, 0);
+	}
 }
 
 void GUI_3DS_RenderBottomScreen(void)
@@ -2035,8 +2184,7 @@ void GUI_3DS_RenderBottomScreen(void)
  }
  if(s_resultsActive && !CustomDialog()) {
   memset(g_bottomScreenBuffer,0,320*240); memset(g_bottomScreenUIMask,2,sizeof(g_bottomScreenUIMask));
-  MenuButton(40,160,240,36,"Continue (A)",!s_resultsButtons || s_dialogFocus==0,false);
-  if(s_resultsButtons) MenuButton(40,204,240,28,"Clear list",s_dialogFocus==1,false);
+  MenuButton(40,160,240,36,s_resultsButtons ? L10N("Back (B)","Atgal (B)") : L10N("Continue (A)","Testi (A)"),true,false);
   return;
  }
 	memset(g_bottomScreenUIMask, 0, sizeof(g_bottomScreenUIMask));
@@ -2046,27 +2194,12 @@ void GUI_3DS_RenderBottomScreen(void)
 		memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
 		memset(g_bottomScreenUIMask, 2, sizeof(g_bottomScreenUIMask));
 
-		if (s_houseConfirmID < 3) {
-			const char *hName = g_table_houseInfo[s_houseConfirmID].name;
-			char qLine1[40], qLine2[40];
-			snprintf(qLine1, sizeof(qLine1), "%s", L10N("Do you wish to join", "Ar norite prisijungti prie"));
-			snprintf(qLine2, sizeof(qLine2), L10N("House %s ?", "%s gimines ?"), hName);
-
-			int x1 = max(8, (BOTTOM_WIDTH - (int)strlen(qLine1) * 8) / 2);
-			int x2 = max(8, (BOTTOM_WIDTH - (int)strlen(qLine2) * 8) / 2);
-			GUI_3DS_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, x1, 68, qLine1, 15);
-			GUI_3DS_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, x2, 86, qLine2, 15);
-
-			const char *optYes = L10N("Yes (A)", "Taip (A)");
-			const char *optNo  = L10N("No (B)", "Ne (B)");
-			MenuButton(8,148,144,36,optYes,s_dialogFocus==0,false);
-			MenuButton(168,148,144,36,optNo,s_dialogFocus==1,false);
-		} else {
-			const char *optProceed = L10N("Proceed (A)", "Testi (A)");
-			const char *optRepeat  = L10N("Repeat (B)", "Kartoti (B)");
-			MenuButton(8,148,144,36,optProceed,s_dialogFocus==0,false);
-			MenuButton(168,148,144,36,optRepeat,s_dialogFocus==1,false);
-		}
+		const bool isHousePick = (g_gameMode == GM_PICKHOUSE || g_playerHouseID == HOUSE_MERCENARY ||
+		                          s_houseConfirmID < 3 || s_mentatButtons->drawParameterNormal.spriteID == 373);
+		const char *optProceed = L10N("Proceed (A)", "Testi (A)");
+		const char *optSecond  = isHousePick ? L10N("Back (B)", "Atgal (B)") : L10N("Repeat (B)", "Kartoti (B)");
+		MenuButton(8,148,144,36,optProceed,s_dialogFocus==0,false);
+		MenuButton(168,148,144,36,optSecond,s_dialogFocus==1,false);
 		return;
 	}
 
@@ -2146,26 +2279,10 @@ void GUI_3DS_RenderBottomScreen(void)
 		return;
 	}
 
-	/* 3. Title choices over the planet background, with a gold border around the focused control. */
+	/* 3. Title choices on the bottom screen, with a gold border around the focused control. */
 	if (GUI_3DS_IsTitleMenu()) {
 		memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
-		if (s_planetBgValid) {
-			memset(g_bottomScreenUIMask, 0, sizeof(g_bottomScreenUIMask));
-			for (int i = 0; i < 36; i++) {
-				int sx = (int)((i * 89u + 17u) % BOTTOM_WIDTH);
-				int sy = (int)((i * 47u + 7u) % BOTTOM_HEIGHT);
-				g_bottomScreenBuffer[sy * BOTTOM_WIDTH + sx] = (i & 3) == 0 ? 15 : ((i & 1) ? 14 : 13);
-			}
-			for (int y = 0; y < 200; y++) {
-				const uint8 *srcRow = s_planetBg + y * 320;
-				uint8 *dstRow = g_bottomScreenBuffer + (y + 20) * BOTTOM_WIDTH;
-				for (int x = 0; x < 320; x++) {
-					if (srcRow[x] != 0) dstRow[x] = srcRow[x];
-				}
-			}
-		} else {
-			memset(g_bottomScreenUIMask, 2, sizeof(g_bottomScreenUIMask));
-		}
+		memset(g_bottomScreenUIMask, 2, sizeof(g_bottomScreenUIMask));
 		int count = min((int)g_widgetProperties[21].height, 6);
 		int rowStep = 28;
 		int totalH = count * rowStep;
@@ -2289,6 +2406,19 @@ void GUI_3DS_RenderBottomScreen(void)
 
 	/* 4. Bottom-Right action panel, laid out like the original game */
 	DrawActionPanel();
+
+	/* 5. Horizontal Barber-pole Column under the action panel (X: 170..319, Y: 224..239) */
+	if (src != NULL) {
+		for (int y = 0; y < 16; y++) {
+			uint8 *dstRow = g_bottomScreenBuffer + (224 + y) * BOTTOM_WIDTH;
+			for (int x = 170; x < 320; x++) {
+				int sy = 40 + (x - 170);
+				if (sy >= 200) sy -= 80;
+				dstRow[x] = src[sy * SCREEN_WIDTH + 240 + y];
+				g_bottomScreenUIMask[(224 + y) * BOTTOM_WIDTH + x] = 0;
+			}
+		}
+	}
 }
 
 void GUI_3DS_HandleBottomTouchHold(int16 touchX, int16 touchY)
@@ -2314,12 +2444,12 @@ void GUI_3DS_HandleBottomTouchHold(int16 touchX, int16 touchY)
 void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 {
 	if(s_resultsActive && !g_3dsModalMessageActive && !CustomDialog()) {
- if(touchX<40 || touchX>=280 || touchY<160 || touchY>=232 || (touchY>=196 && touchY<204)) return;
+ if(touchX<40 || touchX>=280 || touchY<160 || touchY>=196) return;
  if(s_resultsButtons) {
   Widget *chosen=NULL;
-  for(Widget *w=s_resultsButtons;w;w=w->next) if(w->index==(touchY>=204 ? 100 : 101)) chosen=w;
-  s_dialogChosen=chosen;
- } else if(touchY<196) EmitKey(0x1C);
+  for(Widget *w=s_resultsButtons;w;w=w->next) if(w->index==101) chosen=w;
+  s_dialogChosen=chosen ? chosen : s_resultsButtons;
+ } else EmitKey(0x1C);
  return;
  }
  /* 0. If in cutscene, mentat briefing, or modal message dialog: tap advances/skips */
@@ -2544,6 +2674,10 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 						Unit_3DS_SelectAllVisibleUnits();
 					}
 				} break;
+
+				case HIT_JUMP_BASE:
+					Unit_3DS_CycleStructureType(0);
+					break;
 
 				default: break;
 			}

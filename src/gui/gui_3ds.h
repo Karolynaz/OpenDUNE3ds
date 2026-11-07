@@ -67,6 +67,10 @@ uint16 GUI_3DS_MentatEvent(uint16 key);
 void GUI_3DS_MentatChoose(uint16 result);
 struct WindowDesc;
 void GUI_3DS_SetWindow(struct WindowDesc *window);
+void GUI_3DS_SetSaveSlotInfo(int slot, bool used, uint8 houseID, uint16 mission, const char *dateStr);
+void GUI_3DS_CacheHeraldCrests(const uint8 *herald320x200);
+bool GUI_3DS_IsSaveSlotUsed(int slot);
+bool GUI_3DS_CancelMenu(void);
 extern bool g_3dsHousePickerActive;
 extern bool g_3dsHouseBack; /* B pressed on the house selection screen. */
 extern bool g_3dsMentatHelpActive; /* True while the Mentat help list is open during a battle. */
@@ -78,6 +82,7 @@ int GUI_Mentat_3DS_GetRows(const char *text[11], bool header[11]);       /* Set 
 void GUI_3DS_SetTitleActive(bool active);
 void GUI_3DS_SetLaunchActive(bool active);
 void GUI_3DS_SetPlanetBackground(const uint8 *pixels320x200);
+const uint8 *GUI_3DS_GetPlanetBackground(void);
 void GUI_3DS_DrawTitleTextTopCentered(int y, const char *str, uint8 mainColor, uint8 shadowColor);
 uint16 GUI_3DS_TakeHouseChoice(void);
 uint16 GUI_3DS_HouseEvent(uint16 key);
