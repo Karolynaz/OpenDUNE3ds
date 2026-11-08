@@ -96,6 +96,7 @@ void Unit_3DS_CycleStructureType(int c) {cycledCategory=c;}
 void Unit_3DS_SmartAction(uint16 p) {(void)p;smartOrders++;}
 void Unit_3DS_IssueCommand(ActionType a,uint16 p) {(void)a;(void)p;}
 bool Unit_3DS_OpenFactory(Structure *s) {(void)s;return false;}
+bool Unit_3DS_BuildStructureObject(Structure *s) {(void)s;return true;}
 bool Unit_3DS_PlaceActiveStructure(void) {return false;}
 static int visibleSelections,recalls;
 void Unit_3DS_SelectAllVisibleUnits(void) {visibleSelections++;}
@@ -313,8 +314,9 @@ int main(void)
     g_unitSelected=NULL; g_selectedUnitsCount=0; selectedStructure=&yard;
     g_selectionType=SELECTIONTYPE_STRUCTURE;
     GUI_3DS_RenderBottomScreen();
-    assert(s_panelHitCount==3 && s_panelHits[1].kind==HIT_REPAIR && s_panelHits[2].kind==HIT_PRIMARY);
-    assert(s_panelHits[2].y==146 && s_panelHits[2].h==76);
+    assert(s_panelHitCount==4 && s_panelHits[1].kind==HIT_REPAIR && s_panelHits[2].kind==HIT_OPEN_FACTORY && s_panelHits[3].kind==HIT_PRIMARY);
+    assert(s_panelHits[2].y==146 && s_panelHits[2].h==52);
+    assert(s_panelHits[3].y==198 && s_panelHits[3].h==24);
     assert(g_bottomScreenUIMask[155*320+193]==0); /* Original production portrait. */
     Preview("figma-building");
     /* Larger original sprites must stay inside the portrait slot. */

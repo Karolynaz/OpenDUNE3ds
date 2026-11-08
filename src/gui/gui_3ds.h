@@ -92,6 +92,7 @@ bool GUI_3DS_CustomMenuActive(void);
 void GUI_3DS_MenuInput(int dx, int dy, bool confirm);
 uint16 GUI_3DS_TakeDialogEvent(struct Widget *head);
 void GUI_3DS_FactoryBegin(void);
+int  GUI_3DS_GetFactoryFocus(void);
 void GUI_3DS_FactoryUpgrade(void);
 void GUI_3DS_FactoryMinus(void);
 void GUI_3DS_FactoryEvents(void);

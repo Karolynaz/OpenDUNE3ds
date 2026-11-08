@@ -60,5 +60,6 @@ bool Unit_3DS_StartPlacement(Structure *s);
 bool Unit_3DS_PlaceActiveStructure(void);
 void Unit_3DS_CancelPlacement(void);
 bool Unit_3DS_OpenFactory(Structure *s);
+bool Unit_3DS_BuildStructureObject(Structure *s);
 
 #endif /* UNIT_3DS_H */

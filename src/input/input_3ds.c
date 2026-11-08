@@ -284,8 +284,12 @@ void Input_3DS_Poll(void)
 			if (s != NULL && s->o.houseID == g_playerHouseID) {
 				if (s->o.type == STRUCTURE_CONSTRUCTION_YARD && s->o.linkedID != STRUCTURE_INVALID && s->countDown == 0) {
 					g_3dsRequestedStartPlacement = s;
-				} else if (g_table_structureInfo[s->o.type].o.flags.factory) {
+				} else if (s->o.type == STRUCTURE_STARPORT) {
 					Unit_3DS_OpenFactory(s);
+				} else if (g_table_structureInfo[s->o.type].o.flags.factory) {
+					if (s->o.linkedID == STRUCTURE_INVALID) {
+						Unit_3DS_BuildStructureObject(s);
+					}
 				} else if (s->o.type == STRUCTURE_PALACE && s->countDown == 0) {
 					Structure_ActivateSpecial(s);
 					Sound_StartSound(3);
@@ -296,17 +300,22 @@ void Input_3DS_Poll(void)
 			}
 		}
 
-		/* X Button / ZL / ZR: Select all friendly units intersecting the visible battlefield */
+		/* X Button / ZL / ZR: Factory Menu (if friendly factory selected) OR Select all visible units */
 		if (!isMenuOrDialog && !customMenu) {
 			if ((kDown & KEY_X) || (kDown & KEY_ZL) || (kDown & KEY_ZR)) {
-				if (g_selectionType == SELECTIONTYPE_PLACE) Unit_3DS_CancelPlacement();
-				if ((kDown & KEY_X) && s_selectRecallArmed && (uint32)(g_timerGUI-s_lastSelectTick)<=24 && Unit_3DS_CenterSelection()) {
- s_selectRecallArmed=false;
- } else {
- Unit_3DS_SelectAllVisibleUnits();
- s_lastSelectTick=g_timerGUI;
- s_selectRecallArmed=(kDown & KEY_X) && g_selectedUnitsCount>0;
- }
+				Structure *sel = Unit_3DS_GetSelectedStructure();
+				if ((kDown & KEY_X) && sel != NULL && sel->o.houseID == g_playerHouseID && g_table_structureInfo[sel->o.type].o.flags.factory) {
+					Unit_3DS_OpenFactory(sel);
+				} else {
+					if (g_selectionType == SELECTIONTYPE_PLACE) Unit_3DS_CancelPlacement();
+					if ((kDown & KEY_X) && s_selectRecallArmed && (uint32)(g_timerGUI - s_lastSelectTick) <= 24 && Unit_3DS_CenterSelection()) {
+						s_selectRecallArmed = false;
+					} else {
+						Unit_3DS_SelectAllVisibleUnits();
+						s_lastSelectTick = g_timerGUI;
+						s_selectRecallArmed = (kDown & KEY_X) && g_selectedUnitsCount > 0;
+					}
+				}
 			}
 		}
 	}

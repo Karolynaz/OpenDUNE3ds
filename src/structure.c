@@ -33,6 +33,9 @@
 #include "timer.h"
 #include "tools.h"
 #include "unit.h"
+#ifdef __3DS__
+#include "gui/gui_3ds.h"
+#endif
 
 
 Structure *g_structureActive = NULL;
@@ -1567,7 +1570,17 @@ bool Structure_BuildObject(Structure *s, uint16 objectType)
 
 			GUI_ChangeSelectionType(SELECTIONTYPE_STRUCTURE);
 
-			if (res == FACTORY_RESUME) return false;
+			if (res == FACTORY_RESUME) {
+#ifdef __3DS__
+				if (s->o.type != STRUCTURE_STARPORT && s->o.linkedID == STRUCTURE_INVALID) {
+					int focus = GUI_3DS_GetFactoryFocus();
+					if (focus >= 0 && focus < g_factoryWindowTotal) {
+						s->objectType = g_factoryWindowItems[focus].objectType;
+					}
+				}
+#endif
+				return false;
+			}
 
 			if (res == FACTORY_UPGRADE) {
 				Structure_SetUpgradingState(s, 1, NULL);

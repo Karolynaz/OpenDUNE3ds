@@ -523,6 +523,45 @@ bool Unit_3DS_OpenFactory(Structure *s)
 	return true;
 }
 
+bool Unit_3DS_BuildStructureObject(Structure *s)
+{
+	if (s == NULL || !s->o.flags.s.allocated || s->o.houseID != g_playerHouseID || s->o.type >= STRUCTURE_MAX || !g_table_structureInfo[s->o.type].o.flags.factory) return false;
+	if (s->o.type == STRUCTURE_STARPORT) {
+		return Unit_3DS_OpenFactory(s);
+	}
+	if (s->o.linkedID != STRUCTURE_INVALID) return false;
+
+	uint32 buildable = Structure_GetBuildable(s);
+	if (buildable == 0) {
+		Sound_StartSound(31);
+		return false;
+	}
+
+	uint16 targetType = s->objectType;
+	if (s->o.type == STRUCTURE_CONSTRUCTION_YARD) {
+		if (targetType >= STRUCTURE_MAX || (buildable & (1u << targetType)) == 0) {
+			for (uint8 i = 0; i < STRUCTURE_MAX; i++) {
+				if ((buildable & (1u << i)) != 0) { targetType = i; break; }
+			}
+		}
+	} else {
+		if (targetType >= UNIT_MAX || (buildable & (1u << targetType)) == 0) {
+			for (uint8 i = 0; i < UNIT_MAX; i++) {
+				if ((buildable & (1u << i)) != 0) { targetType = i; break; }
+			}
+		}
+	}
+
+	s->objectType = targetType;
+	bool started = Structure_BuildObject(s, targetType);
+	if (started) {
+		Sound_StartSound(3);
+	} else {
+		Sound_StartSound(31);
+	}
+	return started;
+}
+
 void Unit_3DS_SmartAction(uint16 packedTile)
 {
 	Unit *targetUnit = Unit_Get_ByPackedTile(packedTile);

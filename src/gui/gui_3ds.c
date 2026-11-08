@@ -1109,6 +1109,26 @@ void GUI_3DS_FactoryBegin(void)
 	s_factoryPending = -1;
 	s_factorySub = 0;
 	s_factoryScroll = 0;
+
+	Structure *st = Unit_3DS_GetSelectedStructure();
+	if (st != NULL && st->o.houseID == g_playerHouseID && !g_factoryWindowStarport) {
+		uint16 target = st->objectType;
+		for (int i = 0; i < g_factoryWindowTotal; i++) {
+			if (g_factoryWindowItems[i].objectType == target) {
+				s_factoryFocus = i;
+				s_factoryScroll = (i / SHOP_GRID_COLS) * SHOP_GRID_COLS;
+				g_factoryWindowBase = i > 3 ? i - 3 : 0;
+				g_factoryWindowSelected = i - g_factoryWindowBase;
+				GUI_FactoryWindow_DrawDetails();
+				break;
+			}
+		}
+	}
+}
+
+int GUI_3DS_GetFactoryFocus(void)
+{
+	return (s_factoryFocus < g_factoryWindowTotal) ? s_factoryFocus : 0;
 }
 
 void GUI_3DS_FactoryEvents(void)
@@ -1806,7 +1826,7 @@ static const char *GUI_3DS_GetActionLabel(uint16 action)
  * Original-style Dune II action panel (bottom-right of the bottom screen)
  * ========================================================================= */
 
-enum { HIT_PORTRAIT = 1, HIT_UNIT_ACTION, HIT_CANCEL, HIT_PLACE_HERE, HIT_CONFIRM, HIT_REPAIR, HIT_PRIMARY, HIT_UPGRADE, HIT_SMART_ORDER, HIT_SQUAD_UNIT, HIT_JUMP_BASE };
+enum { HIT_PORTRAIT = 1, HIT_UNIT_ACTION, HIT_CANCEL, HIT_PLACE_HERE, HIT_CONFIRM, HIT_REPAIR, HIT_PRIMARY, HIT_UPGRADE, HIT_SMART_ORDER, HIT_SQUAD_UNIT, HIT_JUMP_BASE, HIT_OPEN_FACTORY };
 
 typedef struct PanelHit {
 	int16  x, y, w, h;
@@ -2013,10 +2033,11 @@ static void PanelStructureStatusBox(Structure *s,const StructureInfo *si)
  int total=(int)buildTime<<8;
  int pct=ready ? 100 : building && total ? clamp((total-(int)s->countDown)*100/total,0,99) : 0;
  if(s->o.flags.s.upgrading) pct=clamp(100-(int)s->upgradeTimeLeft,0,100);
- const char *action=L10N("BUILD IT (Y)","GAMINTI (Y)");
+ const char *action = (s->o.type == STRUCTURE_CONSTRUCTION_YARD) ? L10N("BUILD IT (Y)", "STATYTI (Y)") : L10N("BUILD IT (Y)", "GAMINTI (Y)");
  if(!mine) action=L10N("ENEMY","PRIESAS");
  else if(ready) action=L10N("PLACE IT (Y)","STATYTI (Y)");
  else if(building) action=L10N("CANCEL (L+Y)","ATSAUKTI (L+Y)");
+ else if(s->o.type==STRUCTURE_STARPORT) action=L10N("ORDER (Y)","UZSAKYTI (Y)");
  else if(s->o.type==STRUCTURE_PALACE) action=s->countDown ? L10N("CHARGING","KRAUNASI") : L10N("LAUNCH (Y)","PALEISTI (Y)");
  else if(!info->flags.factory) action=L10N("SELECT ALL (X)","VISI KARIAI (X)");
  snprintf(label,sizeof(label),"%s",action);
@@ -2026,9 +2047,18 @@ static void PanelStructureStatusBox(Structure *s,const StructureInfo *si)
 	if (building || s->o.flags.s.upgrading) {
 		snprintf(pctLabel, sizeof(pctLabel), s->o.flags.s.onHold ? "HOLD" : "%d%%", pct);
 		BattleText(278, 194, pctLabel, g_fontNew6p, TC_TEXT, false);
+	} else if (mine && info->flags.factory && !ready && s->o.type != STRUCTURE_STARPORT) {
+		BattleText(278, 194, L10N("MENU (X)", "MENIU (X)"), g_fontNew6p, TC_TEXT, false);
 	}
 	BattleButtonLabel(174, 200, 142, 22, label, (building && s->o.flags.s.onHold) ? TC_SHADOW : ready ? TC_ACTIVE : TC_WHITE);
-	if (mine) PanelAddHit(174, 146, 142, 76, HIT_PRIMARY, 0);
+	if (mine) {
+		if (info->flags.factory && s->o.type != STRUCTURE_STARPORT) {
+			PanelAddHit(174, 146, 142, 52, HIT_OPEN_FACTORY, 0);
+			PanelAddHit(174, 198, 142, 24, HIT_PRIMARY, 0);
+		} else {
+			PanelAddHit(174, 146, 142, 76, HIT_PRIMARY, 0);
+		}
+	}
 }
 
 static bool DrawSquadPanel(void)
@@ -2732,6 +2762,13 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 					if (st != NULL && st->o.houseID == g_playerHouseID && Structure_IsUpgradable(st) && Structure_SetUpgradingState(st, -1, NULL)) Sound_StartSound(3);
 				} break;
 
+				case HIT_OPEN_FACTORY: {
+					Structure *st = Unit_3DS_GetSelectedStructure();
+					if (st != NULL && st->o.houseID == g_playerHouseID && g_table_structureInfo[st->o.type].o.flags.factory) {
+						Unit_3DS_OpenFactory(st);
+					}
+				} break;
+
 				case HIT_PRIMARY: {
 					Structure *st = Unit_3DS_GetSelectedStructure();
 					if (st != NULL && st->o.houseID == g_playerHouseID) {
@@ -2741,8 +2778,10 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 							Structure_CancelBuild(st);
 							st->o.flags.s.onHold = false;
 							Sound_StartSound(3);
-						} else if (g_table_structureInfo[st->o.type].o.flags.factory) {
+						} else if (st->o.type == STRUCTURE_STARPORT) {
 							Unit_3DS_OpenFactory(st);
+						} else if (g_table_structureInfo[st->o.type].o.flags.factory) {
+							Unit_3DS_BuildStructureObject(st);
 						} else if (st->o.type == STRUCTURE_PALACE && st->countDown == 0) {
 							Structure_ActivateSpecial(st);
 							Sound_StartSound(3);
