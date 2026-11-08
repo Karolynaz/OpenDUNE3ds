@@ -746,6 +746,11 @@ void GUI_3DS_CacheHeraldCrests(const uint8 *herald320x200)
 	s_heraldCrestsValid = true;
 }
 
+bool GUI_3DS_AreHeraldCrestsValid(void)
+{
+	return s_heraldCrestsValid;
+}
+
 void GUI_3DS_SetWindow(struct WindowDesc *window)
 {
 	/* Keep the last battlefield frame so the top screen can show a paused view behind menus. */

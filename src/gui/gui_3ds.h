@@ -69,6 +69,7 @@ struct WindowDesc;
 void GUI_3DS_SetWindow(struct WindowDesc *window);
 void GUI_3DS_SetSaveSlotInfo(int slot, bool used, uint8 houseID, uint16 mission, const char *dateStr);
 void GUI_3DS_CacheHeraldCrests(const uint8 *herald320x200);
+bool GUI_3DS_AreHeraldCrestsValid(void);
 bool GUI_3DS_IsSaveSlotUsed(int slot);
 bool GUI_3DS_CancelMenu(void);
 extern bool g_3dsHousePickerActive;

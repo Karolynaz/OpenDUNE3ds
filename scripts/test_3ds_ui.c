@@ -470,7 +470,9 @@ int main(void)
 
     /* 5-slot Save/Load window shows House Crest & Mission on top screen and dates on bottom screen. */
     memset(screens[1], 77, sizeof(screens[1]));
+    assert(!GUI_3DS_AreHeraldCrestsValid());
     GUI_3DS_CacheHeraldCrests(screens[1]);
+    assert(GUI_3DS_AreHeraldCrestsValid());
     GUI_3DS_SetSaveSlotInfo(0, false, HOUSE_ATREIDES, 1, "");
     GUI_3DS_SetSaveSlotInfo(1, true, HOUSE_ORDOS, 4, "2026-11-07 17:30");
     assert(!GUI_3DS_IsSaveSlotUsed(0) && GUI_3DS_IsSaveSlotUsed(1));

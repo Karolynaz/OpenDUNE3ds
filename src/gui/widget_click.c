@@ -849,10 +849,13 @@ static void FillSavegameDesc(bool save)
 	const char *yes = String_Get_ByIndex(STR_YES);
 	bool isLT = (yes != NULL && (yes[0] == 'T' || yes[0] == 't'));
 
-	{
-		uint8 *scr2 = GFX_Screen_Get_ByIndex(SCREEN_2);
-		if (scr2 != NULL && Sprites_LoadImage("HERALD.CPS", SCREEN_2, NULL) != 0) {
-			GUI_3DS_CacheHeraldCrests(scr2);
+	if (!GUI_3DS_AreHeraldCrestsValid()) {
+		const char *hName = File_Exists("HERALD.CPS") ? "HERALD.CPS" : String_GenerateFilename("HERALD");
+		if (File_Exists(hName)) {
+			uint8 *scr3 = GFX_Screen_Get_ByIndex(SCREEN_3);
+			if (scr3 != NULL && Sprites_LoadImage(hName, SCREEN_3, NULL) != 0) {
+				GUI_3DS_CacheHeraldCrests(scr3);
+			}
 		}
 	}
 
@@ -868,43 +871,45 @@ static void FillSavegameDesc(bool save)
 		*desc = '\0';
 		rawName[0] = '\0';
 
-		fileId = ChunkFile_Open_Personal(filename);
-		if (fileId != FILE_INVALID) {
-			uint8 infoBuf[260];
-			uint8 plyrBuf[62 * 6];
-			uint32 infoLen;
-			uint32 plyrLen;
+		if (File_Exists_Personal(filename)) {
+			fileId = ChunkFile_Open_Personal(filename);
+			if (fileId != FILE_INVALID) {
+				uint8 infoBuf[260];
+				uint8 plyrBuf[62 * 6];
+				uint32 infoLen;
+				uint32 plyrLen;
 
-			if (ChunkFile_Read(fileId, HTOBE32(CC_NAME), rawName, 50) > 0) {
-				rawName[50] = '\0';
-				used = (rawName[0] != '\0');
-			}
-
-			memset(infoBuf, 0, sizeof(infoBuf));
-			infoLen = ChunkFile_Read(fileId, HTOBE32(CC_INFO), infoBuf, sizeof(infoBuf));
-			if (infoLen >= 250) {
-				uint16 version = (uint16)(infoBuf[0] | (infoBuf[1] << 8));
-				uint16 campID = 0;
-				if (version == 0x0290) {
-					campID = (uint16)(infoBuf[248] | (infoBuf[249] << 8));
-				} else if (infoLen >= 256) {
-					campID = (uint16)(infoBuf[254] | (infoBuf[255] << 8));
+				if (ChunkFile_Read(fileId, HTOBE32(CC_NAME), rawName, 50) > 0) {
+					rawName[50] = '\0';
+					used = (rawName[0] != '\0');
 				}
-				mission = clamp(campID + 1, 1, 9);
-			}
 
-			memset(plyrBuf, 0, sizeof(plyrBuf));
-			plyrLen = ChunkFile_Read(fileId, HTOBE32(CC_PLYR), plyrBuf, sizeof(plyrBuf));
-			for (uint32 off = 0; off + 62 <= plyrLen; off += 62) {
-				uint8 hIdx = plyrBuf[off];
-				uint16 hFlags = (uint16)(plyrBuf[off + 3] | (plyrBuf[off + 4] << 8));
-				if ((hFlags & 2) != 0 && hIdx < HOUSE_MAX) {
-					houseID = hIdx;
-					break;
+				memset(infoBuf, 0, sizeof(infoBuf));
+				infoLen = ChunkFile_Read(fileId, HTOBE32(CC_INFO), infoBuf, sizeof(infoBuf));
+				if (infoLen >= 250) {
+					uint16 version = (uint16)(infoBuf[0] | (infoBuf[1] << 8));
+					uint16 campID = 0;
+					if (version == 0x0290) {
+						campID = (uint16)(infoBuf[248] | (infoBuf[249] << 8));
+					} else if (infoLen >= 256) {
+						campID = (uint16)(infoBuf[254] | (infoBuf[255] << 8));
+					}
+					mission = clamp(campID + 1, 1, 9);
 				}
-			}
 
-			ChunkFile_Close(fileId);
+				memset(plyrBuf, 0, sizeof(plyrBuf));
+				plyrLen = ChunkFile_Read(fileId, HTOBE32(CC_PLYR), plyrBuf, sizeof(plyrBuf));
+				for (uint32 off = 0; off + 62 <= plyrLen; off += 62) {
+					uint8 hIdx = plyrBuf[off];
+					uint16 hFlags = (uint16)(plyrBuf[off + 3] | (plyrBuf[off + 4] << 8));
+					if ((hFlags & 2) != 0 && hIdx < HOUSE_MAX) {
+						houseID = hIdx;
+						break;
+					}
+				}
+
+				ChunkFile_Close(fileId);
+			}
 		}
 
 		if (used) {
