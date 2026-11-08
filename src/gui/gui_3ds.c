@@ -2047,8 +2047,6 @@ static void PanelStructureStatusBox(Structure *s,const StructureInfo *si)
 	if (building || s->o.flags.s.upgrading) {
 		snprintf(pctLabel, sizeof(pctLabel), s->o.flags.s.onHold ? "HOLD" : "%d%%", pct);
 		BattleText(278, 194, pctLabel, g_fontNew6p, TC_TEXT, false);
-	} else if (mine && info->flags.factory && !ready && s->o.type != STRUCTURE_STARPORT) {
-		BattleText(278, 194, L10N("MENU (X)", "MENIU (X)"), g_fontNew6p, TC_TEXT, false);
 	}
 	BattleButtonLabel(174, 200, 142, 22, label, (building && s->o.flags.s.onHold) ? TC_SHADOW : ready ? TC_ACTIVE : TC_WHITE);
 	if (mine) {
