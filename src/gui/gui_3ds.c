@@ -7,6 +7,8 @@
 #include "gui_3ds.h"
 #include "font.h"
 #include "tactical_3ds.h"
+#include "shop_3ds.h"
+#include "shop_art_3ds.h"
 #include "font_tiny5.h"
 #include "gui.h"
 #include "widget.h"
@@ -267,9 +269,6 @@ static const uint8 s_font8x8_basic[96][8] = {
 	{0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF}  /* block */
 };
 
-static uint8 s_goldBgTop[TOP_WIDTH * TOP_HEIGHT];
-static uint8 s_goldBgBot[BOTTOM_WIDTH * BOTTOM_HEIGHT];
-
 bool GUI_3DS_Init(void)
 {
 	g_topScreenBuffer = (uint8 *)calloc(1, TOP_WIDTH * TOP_HEIGHT);
@@ -277,20 +276,6 @@ bool GUI_3DS_Init(void)
 
 	if (g_topScreenBuffer == NULL || g_bottomScreenBuffer == NULL) {
 		return false;
-	}
-
-	/* Precompute mottled gold background patterns once at startup */
-	for (int y = 0; y < TOP_HEIGHT; y++) {
-		for (int x = 0; x < TOP_WIDTH; x++) {
-			unsigned n = ((x / 3) * 137u ^ (y / 3) * 263u);
-			s_goldBgTop[y * TOP_WIDTH + x] = 112 + ((n ^ (n >> 5)) % 5);
-		}
-	}
-	for (int y = 0; y < BOTTOM_HEIGHT; y++) {
-		for (int x = 0; x < BOTTOM_WIDTH; x++) {
-			unsigned n = ((x / 3) * 137u ^ (y / 3) * 263u);
-			s_goldBgBot[y * BOTTOM_WIDTH + x] = 112 + ((n ^ (n >> 5)) % 5);
-		}
 	}
 
 	g_cursor3DS_X = 200;
@@ -824,8 +809,6 @@ static int DialogItems(Widget **items)
 
 
 static void MenuButton(int x,int y,int w,int h,const char *label,bool highlight,bool dim);
-static void PanelButton(int x,int y,int w,int h,const char *label,bool highlight,bool dim)
-{ MenuButton(x,y,w,h,label,highlight,dim); }
 
 /* Vertical layout of the dialog list on the bottom screen. */
 static void DialogLayout(int *y0, int *step, int *rows)
@@ -837,6 +820,12 @@ static void DialogLayout(int *y0, int *step, int *rows)
 static const char *s_titleLabels[6];
 static int s_factoryFocus;
 static int s_factoryPending = -1;
+/* Purchase window state. Focus index: [0,total) = list entry, total = left button (BUY / ORDER),
+ * total+1 = BACK (Starport only; the Factory / Construction Yard list has no focusable buttons). */
+static int s_factorySub;    /* Starport row sub-focus: 0 = "+", 1 = "-" */
+static int s_factoryScroll; /* First visible grid row (Factory) or list row (Starport) */
+#define SHOP_GRID_COLS 4
+#define SHOP_VISIBLE_ROWS 3
 bool g_3dsHousePickerActive = false;
 bool g_3dsHouseBack = false;
 
@@ -971,82 +960,6 @@ static void GUI_3DS_DrawCenteredSubtitle(const char *text, int centerY)
 	}
 }
 
-static void GoldBackground(uint8 *buf, int width)
-{
-	if (width == TOP_WIDTH) {
-		memset(g_topScreenUIMask, 1, TOP_WIDTH * TOP_HEIGHT);
-		memcpy(buf, s_goldBgTop, TOP_WIDTH * TOP_HEIGHT);
-	} else {
-		memset(g_bottomScreenUIMask, 1, BOTTOM_WIDTH * BOTTOM_HEIGHT);
-		memcpy(buf, s_goldBgBot, BOTTOM_WIDTH * BOTTOM_HEIGHT);
-	}
-}
-
-static void GoldFrame(uint8 *buf, int width, int x, int y, int w, int h, bool selected)
-{
-	GUI_3DS_FillRect(buf, width, x, y, x+w-1, y+h-1, 116);
-	GUI_3DS_DrawBevel(buf, width, x, y, x+w-1, y+h-1, 118, 110);
-	GUI_3DS_DrawBevel(buf, width, x+2, y+2, x+w-3, y+h-3, 119, 111);
-	GUI_3DS_DrawRect(buf, width, x+4, y+4, x+w-5, y+h-5, selected ? 15 : 113);
-	/* Raised corner rivets echo the original Dune II gold panel artwork. */
-	for (int corner=0;corner<4;corner++) {
-		int cx=corner&1 ? x+w-6 : x+2;
-		int cy=corner&2 ? y+h-6 : y+2;
-		GUI_3DS_FillRect(buf,width,cx,cy,cx+3,cy+3,111);
-		GUI_3DS_FillRect(buf,width,cx,cy,cx+2,cy+2,118);
-		GUI_3DS_PutPixel(buf,width,cx+1,cy+1,119);
-	}
-}
-
-static void OriginalIcon(uint8 *buf, int stride, int x, int y, uint16 spriteID, int scale)
-{
-	uint8 *sprite = g_sprites[spriteID];
-	if (sprite == NULL) return;
-	int w = Sprite_GetWidth(sprite), h = Sprite_GetHeight(sprite);
-	if (w > 64 || h > 64) return;
-	uint8 saved[64*64];
-	uint8 *scratch = GFX_Screen_Get_ByIndex(SCREEN_2);
-	if (scratch == NULL) return;
-	for (int row=0; row<h; row++) {
-		memcpy(saved+row*w, scratch+row*320, w);
-		memset(scratch+row*320, 0, w);
-	}
-	GUI_DrawSprite(SCREEN_2, sprite, 0, 0, 0, 0);
-	bool isPortrait = (w >= 24 && h >= 16);
-	uint8 *mask = (stride == 400) ? g_topScreenUIMask : g_bottomScreenUIMask;
-	int offX = 0, offY = 0;
-	if (scale == 2) {
-		GUI_3DS_FillRect(buf, stride, x, y, x + 63, y + 47, 0);
-		offX = (w < 32) ? (32 - w) / 2 : 0;
-		offY = (h < 24) ? (24 - h) / 2 : 0;
-	}
-	for (int row=0; row<h; row++) {
-		for (int col=0; col<w; col++) {
-			uint8 px = scratch[row*320+col];
-			if (px != 0 || isPortrait) {
-				if (scale == 2) {
-					int dx = x + (offX + col) * 2;
-					int dy = y + (offY + row) * 2;
-					GUI_3DS_PutPixel(buf, stride, dx,     dy,     px);
-					GUI_3DS_PutPixel(buf, stride, dx + 1, dy,     px);
-					GUI_3DS_PutPixel(buf, stride, dx,     dy + 1, px);
-					GUI_3DS_PutPixel(buf, stride, dx + 1, dy + 1, px);
-					if (dx >= 0 && dx + 1 < stride && dy >= 0 && dy + 1 < 240) {
-						mask[dy * stride + dx] = 0;
-						mask[dy * stride + dx + 1] = 0;
-						mask[(dy + 1) * stride + dx] = 0;
-						mask[(dy + 1) * stride + dx + 1] = 0;
-					}
-				} else {
-					GUI_3DS_PutPixel(buf, stride, x+col, y+row, px);
-					if (x+col>=0 && x+col<stride && y+row>=0 && y+row<240)
-						mask[(y+row)*stride+x+col] = 0;
-				}
-			}
-		}
-		memcpy(scratch+row*320, saved+row*w, w);
-	}
-}
 
 static void EmitKey(uint16 scan)
 {
@@ -1139,28 +1052,36 @@ void GUI_3DS_MenuInput(int dx, int dy, bool confirm)
 	} else if (GUI_3DS_IsFactoryWindow()) {
 		Mouse_EventHandler(0,0,false,false);
 		int total = g_factoryWindowTotal;
-		int maxFocus = g_factoryWindowStarport ? (total + 3) : (g_factoryWindowUpgradeCost ? (total + 2) : (total + 1));
-		if (s_factoryFocus < total) {
-			if (dy < 0) s_factoryFocus = max(0, s_factoryFocus - 4);
-			if (dy > 0) s_factoryFocus = (s_factoryFocus + 4 < total) ? (s_factoryFocus + 4) : total;
-			if (dx) s_factoryFocus = max(0, min(total - 1, s_factoryFocus + dx));
+		if (total <= 0) return;
+		if (!g_factoryWindowStarport) {
+			/* Factory / Construction Yard: a plain grid. The BUY and BACK buttons are never
+			 * focusable, so "A" always buys whatever is highlighted. */
+			int f = clamp(s_factoryFocus, 0, total - 1);
+			if (dx) f = clamp(f + dx, 0, total - 1);
+			if (dy < 0 && f >= SHOP_GRID_COLS) f -= SHOP_GRID_COLS;
+			if (dy > 0 && (f / SHOP_GRID_COLS + 1) * SHOP_GRID_COLS < total) f = min(f + SHOP_GRID_COLS, total - 1);
+			s_factoryFocus = f;
+			s_factoryPending = f;
+			if (confirm) s_factoryPending = total; /* Buy / build the highlighted item */
 		} else {
-			if (dy < 0) s_factoryFocus = (s_factoryFocus == total) ? max(0, total - 1) : (s_factoryFocus - 1);
-			else if (dy > 0) s_factoryFocus = min(maxFocus, s_factoryFocus + 1);
-			else if (dx != 0) s_factoryFocus = clamp(s_factoryFocus + dx, total, maxFocus);
-		}
-		if (s_factoryFocus < total) s_factoryPending = s_factoryFocus;
-		if (confirm) {
-			if (g_factoryWindowStarport) {
-				/* In Starport: A on an item or on [+1] adds 1 to order; on [-1] removes 1; on [SEND] sends order; on [RESUME] exits */
-				if (s_factoryFocus < total || s_factoryFocus == total) s_factoryPending = total + 3; /* +1 */
-				else if (s_factoryFocus == total + 1) s_factoryPending = total + 4; /* -1 */
-				else if (s_factoryFocus == total + 2) s_factoryPending = total;     /* Send Order */
-				else if (s_factoryFocus == total + 3) s_factoryPending = total + 1; /* Resume Game */
+			/* Starport: one entry per row with "+" / "-"; walking past the last row lands on
+			 * ORDER (under "+") or BACK (under "-"). */
+			int f = s_factoryFocus;
+			if (f < total) {
+				if (dx < 0) s_factorySub = 0;
+				else if (dx > 0) s_factorySub = 1;
+				if (dy < 0) f = max(0, f - 1);
+				else if (dy > 0) f = (f + 1 < total) ? f + 1 : total + s_factorySub;
 			} else {
-				if (s_factoryFocus < total || s_factoryFocus == total) s_factoryPending = total; /* Build This */
-				else if (g_factoryWindowUpgradeCost && s_factoryFocus == total + 1) s_factoryPending = total + 2; /* Upgrade */
-				else s_factoryPending = total + 1; /* Resume Game */
+				if (dy < 0) { s_factorySub = (f == total + 1) ? 1 : 0; f = total - 1; }
+				else if (dx) f = clamp(f + dx, total, total + 1);
+			}
+			s_factoryFocus = f;
+			if (f < total) s_factoryPending = f;
+			if (confirm) {
+				if (f < total) s_factoryPending = s_factorySub ? total + 4 : total + 3; /* -1 / +1 */
+				else if (f == total) { if (g_factoryWindowOrdered > 0) s_factoryPending = total; } /* ORDER */
+				else s_factoryPending = total + 1;                                              /* BACK */
 			}
 		}
 	}
@@ -1181,6 +1102,8 @@ void GUI_3DS_FactoryBegin(void)
 {
 	s_factoryFocus = 0;
 	s_factoryPending = -1;
+	s_factorySub = 0;
+	s_factoryScroll = 0;
 }
 
 void GUI_3DS_FactoryEvents(void)
@@ -1197,12 +1120,11 @@ void GUI_3DS_FactoryEvents(void)
 		GUI_FactoryWindow_DrawDetails();
 	}
 	if (pending == total) {
-		/* Build This (Factory/Yard) or Send Order (Starport) */
-		if (g_factoryWindowStarport && g_factoryWindowOrdered == 0) {
-			/* If nothing ordered yet in Starport, +1 the selected item first */
-			GUI_Purchase_Plus_Click(GUI_Widget_Get_ByIndex(g_widgetInvoiceTail, 54));
+		/* Buy / build the highlighted item (Factory, Yard) or send the order (Starport). */
+		if (g_factoryWindowStarport) {
+			if (g_factoryWindowOrdered > 0) GUI_Production_BuildThis_Click(GUI_Widget_Get_ByIndex(g_widgetInvoiceTail, 56));
 		} else {
-			GUI_Production_BuildThis_Click(GUI_Widget_Get_ByIndex(g_widgetInvoiceTail, g_factoryWindowStarport ? 56 : 57));
+			GUI_Production_BuildThis_Click(GUI_Widget_Get_ByIndex(g_widgetInvoiceTail, 57));
 		}
 	} else if (pending == total + 1) {
 		GUI_Production_ResumeGame_Click(NULL);
@@ -1270,180 +1192,297 @@ void GUI_3DS_FactoryMinus(void)
 	}
 }
 
-static void FactoryBottom(void)
+static inline uint8 ShopHouseColor(void)
 {
-	GoldBackground(g_bottomScreenBuffer, 320);
-	int total = g_factoryWindowTotal;
-	int chosen = (s_factoryFocus < total) ? s_factoryFocus : (g_factoryWindowBase + g_factoryWindowSelected);
-	int firstRow = max(0, chosen / 4 - 2);
-	for (int i = firstRow * 4; i < total && i < (firstRow + 3) * 4; i++) {
-		int x = 8 + (i % 4) * 77, y = 8 + (i / 4 - firstRow) * 52;
-		bool isFocused = (s_factoryFocus == i) || (s_factoryFocus >= total && (g_factoryWindowBase + g_factoryWindowSelected) == i);
-		GoldFrame(g_bottomScreenBuffer, 320, x, y, 73, 48, isFocused);
-		OriginalIcon(g_bottomScreenBuffer, 320, x + 20, y + 6, g_factoryWindowItems[i].objectInfo->spriteID, 1);
-		char price[16];
-		if (g_factoryWindowItems[i].objectInfo->available < 0) {
-			snprintf(price, sizeof(price), "UPGR");
-		} else {
-			snprintf(price, sizeof(price), "%u", g_factoryWindowItems[i].credits);
-		}
-		GUI_3DS_DrawText(g_bottomScreenBuffer, 320, x + 8, y + 35, price, g_factoryWindowItems[i].objectInfo->available > 0 ? 15 : 110);
+	if (g_playerHouseID == HOUSE_ATREIDES) return SP_SEL_BLUE;
+	if (g_playerHouseID == HOUSE_ORDOS)    return SP_SEL_GREEN;
+	return SP_SEL_RED; /* Harkonnen and fallback */
+}
 
-		if (g_factoryWindowStarport) {
-			if (g_factoryWindowItems[i].objectInfo->available > 0) {
-				char stock[8];
-				snprintf(stock, sizeof(stock), "x%d", g_factoryWindowItems[i].objectInfo->available);
-				GUI_3DS_DrawText(g_bottomScreenBuffer, 320, x + 5, y + 6, stock, 110);
+static inline uint8 ShopHouseTint(void)
+{
+	if (g_playerHouseID == HOUSE_ATREIDES) return SP_TINT_BLUE;
+	if (g_playerHouseID == HOUSE_ORDOS)    return SP_TINT_GREEN;
+	return SP_TINT_RED;
+}
+
+/* Dedicated shop button per Figma node 150:397.
+ * 2px outer frame (or House selection color when active),
+ * 2px inner top/left highlight #FFB200, 2px inner bottom/right shadow #A36600,
+ * center fill #D68B00, and Tiny5 white text with 2px black drop shadow. */
+static void ShopButton(int x, int y, int w, int h, const char *label, bool selected, bool dim)
+{
+	uint8 frameCol = selected ? ShopHouseColor() : SP_FRAME;
+	for (int dy = 0; dy < h; dy++) {
+		int py = y + dy;
+		if (py < 0 || py >= BOTTOM_HEIGHT) continue;
+		for (int dx = 0; dx < w; dx++) {
+			int px = x + dx;
+			if (px < 0 || px >= BOTTOM_WIDTH) continue;
+			uint8 col;
+			if (dx < 2 || dx >= w - 2 || dy < 2 || dy >= h - 2) {
+				col = frameCol;
+			} else if (dx < 4 || dy < 4) {
+				col = SP_BTN_HL;
+			} else if (dx >= w - 4 || dy >= h - 4) {
+				col = SP_BTN_SH;
+			} else {
+				col = SP_BTN_FILL;
 			}
-			if (g_factoryWindowItems[i].amount > 0) {
-				char ord[8];
-				snprintf(ord, sizeof(ord), "+%u", g_factoryWindowItems[i].amount);
-				GUI_3DS_DrawText(g_bottomScreenBuffer, 320, x + 46, y + 35, ord, 15);
+			g_bottomScreenBuffer[py * BOTTOM_WIDTH + px] = col;
+			g_bottomScreenUIMask[py * BOTTOM_WIDTH + px] = SHOP_UI_MASK;
+		}
+	}
+	if (label && *label) {
+		uint8 textColor = dim ? SP_TEXT_DIM : SP_WHITE;
+		int baseY = y + h / 2 + 4;
+		Tiny5_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, x + w / 2, baseY, label, textColor, true);
+	}
+}
+
+static void ShopTileIcon(int x, int y, uint16 spriteID)
+{
+	uint8 *sprite = g_sprites[spriteID];
+	if (sprite == NULL) return;
+	int w = Sprite_GetWidth(sprite), h = Sprite_GetHeight(sprite);
+	if (w > 64 || h > 64) return;
+	uint8 saved[64 * 64];
+	uint8 *scratch = GFX_Screen_Get_ByIndex(SCREEN_2);
+	if (scratch == NULL) return;
+	for (int row = 0; row < h; row++) {
+		memcpy(saved + row * w, scratch + row * 320, w);
+		memset(scratch + row * 320, 0, w);
+	}
+	GUI_DrawSprite(SCREEN_2, sprite, 0, 0, 0, 0);
+	int offX = (w < 32) ? (32 - w) / 2 : 0;
+	int offY = (h < 24) ? (24 - h) / 2 : 0;
+	for (int row = 0; row < h; row++) {
+		for (int col = 0; col < w; col++) {
+			uint8 px = scratch[row * 320 + col];
+			if (px != 0) {
+				int dx = x + (offX + col) * 2;
+				int dy = y + (offY + row) * 2;
+				for (int sy = 0; sy < 2; sy++) {
+					for (int sx = 0; sx < 2; sx++) {
+						int fx = dx + sx, fy = dy + sy;
+						if (fx >= x + 2 && fx < x + 62 && fy >= y + 2 && fy < y + 46) {
+							g_bottomScreenBuffer[fy * BOTTOM_WIDTH + fx] = px;
+							g_bottomScreenUIMask[fy * BOTTOM_WIDTH + fx] = 0; /* DOS palette for sprite */
+						}
+					}
+				}
 			}
 		}
 	}
+	for (int row = 0; row < h; row++) {
+		memcpy(scratch + row * 320, saved + row * w, w);
+	}
+}
 
-	if (g_factoryWindowStarport) {
-		PanelButton(8, 168, 96, 30, "+1 (A)", s_factoryFocus == total, false);
-		PanelButton(108, 168, 96, 30, "-1 (Y)", s_factoryFocus == total + 1, false);
-		PanelButton(208, 168, 104, 30, L10N("SEND (X)", "SIUSTI(X)"), s_factoryFocus == total + 2, g_factoryWindowOrdered == 0);
-		PanelButton(8, 204, 304, 30, L10N("RESUME GAME (B)", "ISEITI / ATGAL (B)"), s_factoryFocus == total + 3, false);
-	} else if (g_factoryWindowUpgradeCost > 0) {
-		PanelButton(8, 168, 152, 30, L10N("BUILD (A)", g_factoryWindowConstructionYard ? "STATYTI (A)" : "GAMINTI (A)"), s_factoryFocus == total, false);
-		char upgText[24];
-		snprintf(upgText, sizeof(upgText), "%s:%u", L10N("UPGRADE", "GERINTI"), g_factoryWindowUpgradeCost);
-		PanelButton(164, 168, 148, 30, upgText, s_factoryFocus == total + 1, false);
-		PanelButton(8, 204, 304, 30, L10N("RESUME GAME (B)", "ISEITI / ATGAL (B)"), s_factoryFocus == total + 2, false);
+static void FactoryBottom(void)
+{
+	memcpy(g_bottomScreenBuffer, s_shopBotBG, 320 * 240);
+	memset(g_bottomScreenUIMask, 0, sizeof(g_bottomScreenUIMask));
+
+	int total = g_factoryWindowTotal;
+	if (total <= 0) return;
+
+	if (!g_factoryWindowStarport) {
+		/* --- FACTORY / CONSTRUCTION YARD: 4x3 Grid --- */
+		int focusRow = s_factoryFocus / SHOP_GRID_COLS;
+		if (focusRow < s_factoryScroll) s_factoryScroll = focusRow;
+		if (focusRow >= s_factoryScroll + SHOP_VISIBLE_ROWS) {
+			s_factoryScroll = focusRow - SHOP_VISIBLE_ROWS + 1;
+		}
+		int maxScroll = max(0, (total + SHOP_GRID_COLS - 1) / SHOP_GRID_COLS - SHOP_VISIBLE_ROWS);
+		s_factoryScroll = clamp(s_factoryScroll, 0, maxScroll);
+
+		for (int r = 0; r < SHOP_VISIBLE_ROWS; r++) {
+			int gridY = 30 + r * 52;
+			for (int c = 0; c < SHOP_GRID_COLS; c++) {
+				int gridX = 21 + c * 71;
+				int idx = (s_factoryScroll + r) * SHOP_GRID_COLS + c;
+				if (idx >= total) continue;
+
+				bool isSel = (s_factoryFocus == idx);
+				uint8 borderCol = isSel ? ShopHouseColor() : SP_WHITE;
+
+				/* 2px outer border + SP_TILE_FACE background */
+				for (int dy = 0; dy < 48; dy++) {
+					int py = gridY + dy;
+					for (int dx = 0; dx < 64; dx++) {
+						int px = gridX + dx;
+						bool isBorder = (dx < 2 || dx >= 62 || dy < 2 || dy >= 46);
+						g_bottomScreenBuffer[py * BOTTOM_WIDTH + px] = isBorder ? borderCol : SP_TILE_FACE;
+						g_bottomScreenUIMask[py * BOTTOM_WIDTH + px] = SHOP_UI_MASK;
+					}
+				}
+
+				/* 2x Centered icon */
+				if (g_factoryWindowItems[idx].objectInfo) {
+					ShopTileIcon(gridX, gridY, g_factoryWindowItems[idx].objectInfo->spriteID);
+				}
+			}
+		}
+
+		/* Bottom buttons: BUY (A) and BACK (B) - visual action hints, unfocusable */
+		ShopButton(19, 206, 141, 27, L10N("BUY (A)", "PIRKTI (A)"), false, false);
+		ShopButton(160, 206, 141, 27, L10N("BACK (B)", "ATGAL (B)"), false, false);
+
 	} else {
-		PanelButton(8, 168, 304, 30, L10N("BUILD THIS (A)", g_factoryWindowConstructionYard ? "STATYTI (A)" : "GAMINTI (A)"), s_factoryFocus == total, false);
-		PanelButton(8, 204, 304, 30, L10N("RESUME GAME (B)", "ISEITI / ATGAL (B)"), s_factoryFocus == total + 1, false);
+		/* --- STARPORT: 1 unit per row with +, - buttons and 25% House tint on active row --- */
+		int focusIdx = (s_factoryFocus < total) ? s_factoryFocus : (total - 1);
+		if (focusIdx < s_factoryScroll) s_factoryScroll = focusIdx;
+		if (focusIdx >= s_factoryScroll + SHOP_VISIBLE_ROWS) {
+			s_factoryScroll = focusIdx - SHOP_VISIBLE_ROWS + 1;
+		}
+		int maxScroll = max(0, total - SHOP_VISIBLE_ROWS);
+		s_factoryScroll = clamp(s_factoryScroll, 0, maxScroll);
+
+		for (int r = 0; r < SHOP_VISIBLE_ROWS; r++) {
+			int idx = s_factoryScroll + r;
+			if (idx >= total) continue;
+
+			int rowY = 20 + r * 54;
+			bool isCurrentRow = (s_factoryFocus == idx);
+
+			/* 25% House tint for active row */
+			if (isCurrentRow) {
+				uint8 tint = ShopHouseTint();
+				for (int dy = 0; dy < 54; dy++) {
+					int py = rowY + dy;
+					if (py >= 20 && py <= 181) {
+						for (int px = 16; px <= 303; px++) {
+							g_bottomScreenBuffer[py * BOTTOM_WIDTH + px] = tint;
+							g_bottomScreenUIMask[py * BOTTOM_WIDTH + px] = SHOP_UI_MASK;
+						}
+					}
+				}
+			}
+
+			/* 64x48 Unit tile at X: 21, Y: rowY + 3 */
+			int iconX = 21, iconY = rowY + 3;
+			for (int dy = 0; dy < 48; dy++) {
+				int py = iconY + dy;
+				for (int dx = 0; dx < 64; dx++) {
+					int px = iconX + dx;
+					bool isBorder = (dx < 2 || dx >= 62 || dy < 2 || dy >= 46);
+					g_bottomScreenBuffer[py * BOTTOM_WIDTH + px] = isBorder ? SP_WHITE : SP_TILE_FACE;
+					g_bottomScreenUIMask[py * BOTTOM_WIDTH + px] = SHOP_UI_MASK;
+				}
+			}
+			if (g_factoryWindowItems[idx].objectInfo) {
+				ShopTileIcon(iconX, iconY, g_factoryWindowItems[idx].objectInfo->spriteID);
+			}
+
+			/* Quantity text: "X of Max" centered around X: 148, Y: rowY + 31 */
+			char qtyStr[32];
+			int avail = g_factoryWindowItems[idx].objectInfo ? g_factoryWindowItems[idx].objectInfo->available : 0;
+			snprintf(qtyStr, sizeof(qtyStr), "%u %s %d",
+				g_factoryWindowItems[idx].amount,
+				L10N("of", "is"),
+				avail > 0 ? avail : 0);
+			for (int py = rowY + 16; py < rowY + 44; py++) {
+				for (int px = 90; px < 210; px++) {
+					if (!isCurrentRow) {
+						g_bottomScreenBuffer[py * BOTTOM_WIDTH + px] = SP_SLOT;
+						g_bottomScreenUIMask[py * BOTTOM_WIDTH + px] = SHOP_UI_MASK;
+					}
+				}
+			}
+			Tiny5_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, 148, rowY + 31, qtyStr, SP_WHITE, true);
+
+			/* "+" button at X: 213, Y: rowY + 13, W: 40, H: 27 */
+			bool plusSel = (isCurrentRow && s_factorySub == 0);
+			bool plusDim = (avail <= 0 || (int)g_factoryWindowItems[idx].amount >= avail);
+			ShopButton(213, rowY + 13, 40, 27, "+", plusSel, plusDim);
+
+			/* "-" button at X: 259, Y: rowY + 13, W: 40, H: 27 */
+			bool minusSel = (isCurrentRow && s_factorySub == 1);
+			bool minusDim = (g_factoryWindowItems[idx].amount == 0);
+			ShopButton(259, rowY + 13, 40, 27, "-", minusSel, minusDim);
+		}
+
+		/* Bottom buttons: ORDER and BACK (B) */
+		bool orderSel = (s_factoryFocus == total);
+		bool orderDim = (g_factoryWindowOrdered == 0);
+		ShopButton(19, 206, 141, 27, L10N("ORDER", "UZSAKYTI"), orderSel, orderDim);
+
+		bool backSel = (s_factoryFocus == total + 1);
+		ShopButton(160, 206, 141, 27, L10N("BACK (B)", "ATGAL (B)"), backSel, false);
 	}
 }
 
 static void FactoryTop(void)
 {
-	GoldBackground(g_topScreenBuffer, 400);
-	FactoryWindowItem *item = GUI_FactoryWindow_GetItem(g_factoryWindowSelected);
-	if (!item) return;
-	char text[64];
-	GoldFrame(g_topScreenBuffer, 400, 8, 6, 384, 28, false);
-	if (g_factoryWindowStarport) {
-		uint32 orderCost = 0;
-		for (int i = 0; i < g_factoryWindowTotal; i++) {
-			orderCost += (uint32)g_factoryWindowItems[i].amount * g_factoryWindowItems[i].credits;
-		}
-		snprintf(text, sizeof(text), L10N("Cred: %u  Cost: %u  Invoice: %lu", "Kred: %u  Kaina: %u  Uzsakyta: %lu"), g_playerHouse ? g_playerHouse->credits : 0, item->credits, (unsigned long)orderCost);
-	} else {
-		snprintf(text, sizeof(text), L10N("Credits: %u   Cost: %u", "Kreditai: %u   Kaina: %u"), g_playerHouse ? g_playerHouse->credits : 0, item->credits);
-	}
-	GUI_3DS_DrawText(g_topScreenBuffer, 400, 18, 16, text, 15);
+	memcpy(g_topScreenBuffer, s_shopTopBG, 400 * 240);
+	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
 
-	GoldFrame(g_topScreenBuffer, 400, 8, 38, 384, 26, false);
-	GUI_3DS_DrawText(g_topScreenBuffer, 400, 18, 47, String_Get_ByIndex(item->objectInfo->stringID_full), 110);
+	int chosen = (s_factoryFocus < g_factoryWindowTotal) ? s_factoryFocus : (g_factoryWindowBase + g_factoryWindowSelected);
+	FactoryWindowItem *item = (chosen >= 0 && chosen < g_factoryWindowTotal) ? &g_factoryWindowItems[chosen] : NULL;
+	if (!item || !item->objectInfo) return;
 
-	GoldFrame(g_topScreenBuffer, 400, 8, 68, 200, 124, false);
+	/* 1. Credits counter (top-right cells at X: 246..317, Y: 10..19) */
+	uint32 credVal = g_playerHouse ? g_playerHouse->credits : 0;
+	char credStr[16];
+	snprintf(credStr, sizeof(credStr), "%u", (unsigned)credVal);
+	int cw = (int)strlen(credStr) * 8;
+	int credX = 315 - cw;
+	if (credX < 246) credX = 246;
+	GUI_3DS_DrawText(g_topScreenBuffer, 400, credX, 11, credStr, 15);
+
+	/* 2. WSA animation preview centered in frame X: 89..309 (W=221), Y: 41..175 (H=135) */
 	uint8 *src = GFX_Screen_Get_ByIndex(SCREEN_1);
-	/* Original WSA preview, unchanged. */
-	for (int y = 0; y < 112; y++) {
-		memcpy(g_topScreenBuffer + (74 + y) * 400 + 16, src + (48 + y) * 320 + 128, 184);
-		memset(g_topScreenUIMask + (74 + y) * 400 + 16, 0, 184);
+	if (src != NULL) {
+		int wsaX = 107; /* 89 + (221 - 184) / 2 */
+		int wsaY = 52;  /* 41 + (135 - 112) / 2 */
+		for (int y = 0; y < 112; y++) {
+			memcpy(g_topScreenBuffer + (wsaY + y) * 400 + wsaX, src + (48 + y) * 320 + 128, 184);
+			memset(g_topScreenUIMask + (wsaY + y) * 400 + wsaX, 0, 184);
+		}
 	}
 
-	/* Right Info Panel (X: 214..391, Y: 68..191) */
-	GoldFrame(g_topScreenBuffer, 400, 214, 68, 178, 124, false);
+	/* 3. Bottom plaque: X: 86..315 (W=230), Y: 194..229 (H=36) */
+	/* Line 1: Item Name - Cost */
+	const char *name = String_Get_ByIndex(item->objectInfo->stringID_full);
+	char line1[64];
+	if (item->objectInfo->available < 0) {
+		snprintf(line1, sizeof(line1), "%s (%s)", name ? name : "", L10N("UPGRADE REQUIRED", "REIKIA TOBULINTI"));
+	} else {
+		snprintf(line1, sizeof(line1), "%s - %u", name ? name : "", item->credits);
+	}
+	int len1 = 0;
+	for (const unsigned char *p = (const unsigned char *)line1; *p; ) {
+		if (*p == 0xC4 || *p == 0xC5) p += 2; else p++;
+		len1++;
+	}
+	int tx1 = max(90, 86 + (230 - len1 * 8) / 2);
+	GUI_3DS_DrawText(g_topScreenBuffer, 400, tx1 + 1, 200, line1, 0);
+	GUI_3DS_DrawText(g_topScreenBuffer, 400, tx1, 199, line1, 15);
+
+	/* Line 2: Stats / Description (no repeated quantity in Starport) */
+	char line2[64];
+	line2[0] = '\0';
 	if (g_factoryWindowConstructionYard) {
-		const StructureInfo *si = &g_table_structureInfo[item->objectType];
-		if (si->powerUsage < 0) {
-			snprintf(text, sizeof(text), L10N("Power: +%d", "Energija: +%d"), -si->powerUsage);
-		} else {
-			snprintf(text, sizeof(text), L10N("Power: -%d", "Energija: -%d"), si->powerUsage);
-		}
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 78, text, 110);
-		snprintf(text, sizeof(text), L10N("Armor: %u", "Gyvybes: %u"), si->o.hitpoints);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 94, text, 110);
-
-		uint16 lw = g_table_structure_layoutSize[si->layout].width;
-		uint16 lh = g_table_structure_layoutSize[si->layout].height;
-		snprintf(text, sizeof(text), L10N("Size:  %ux%u", "Dydis: %ux%u"), lw, lh);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 110, text, 110);
-
-		/* Draw visual footprint grid */
-		for (uint16 gy = 0; gy < 3; gy++) {
-			for (uint16 gx = 0; gx < 3; gx++) {
-				int bx = 342 + gx * 12;
-				int by = 78 + gy * 12;
-				bool used = (gx < lw && gy < lh);
-				GUI_3DS_FillRect(g_topScreenBuffer, 400, bx, by, bx + 9, by + 9, used ? 15 : 111);
-				GUI_3DS_DrawRect(g_topScreenBuffer, 400, bx, by, bx + 9, by + 9, 110);
-			}
-		}
-
-		static const char *descriptionsEN[STRUCTURE_MAX] = {
-			"1x1 concrete\nfoundation.", "2x2 concrete\nfoundation.",
-			"House Palace &\nsuperweapon.", "Produces light\nvehicles.",
-			"Produces heavy\ncombat tanks.", "Produces air\nunits.",
-			"Advanced tech\nresearch.", "Trains rocket\ntroopers.",
-			"Constructs base\nstructures.", "Generates base\npower.",
-			"Trains light\ninfantry.", "Orders units\nfrom CHOAM.",
-			"Refines spice\ninto credits.", "Repairs damaged\nvehicles.",
-			"Defensive base\nwall.", "Cannon turret\ndefense.",
-			"Long-range\nrocket turret.", "Stores refined\nspice.",
-			"Activates base\nradar map."
-		};
-		static const char *descriptionsLT[STRUCTURE_MAX] = {
-			"1x1 plokste\npamatams.", "2x2 plokste\npamatams.",
-			"Rumai ir spec.\nginklas.", "Gamina lengvas\nmasinas.",
-			"Gamina tankus\nir kovos mas.", "Gamina orlaivius\n(Carryall/Orni).",
-			"Aukstu technol.\ncentras.", "Rengia sunkiuos.\nraket. karius.",
-			"Stato visus\nbazes pastatus.", "Gamina energija\nvisei bazei.",
-			"Rengia lengv.\npestininkus.", "Uzsako technika\nis CHOAM.",
-			"Perdirba priesk.\ni kreditus.", "Remontuoja\nkovos technika.",
-			"Apsaugine bazes\nsiena.", " Bokstelis pries\nzemes taikinius.",
-			"Raketinis bokst.\n(tolimas nuot.).", "Saugo surinkta\nprieskoni.",
-			" aktyvuoja\ntaktini radara."
-		};
 		if (item->objectType < STRUCTURE_MAX) {
-			GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 134, L10N(descriptionsEN[item->objectType], descriptionsLT[item->objectType]), 110);
+			const StructureInfo *si = &g_table_structureInfo[item->objectType];
+			snprintf(line2, sizeof(line2), L10N("Armor: %u  Power: %+d", "Sarvai: %u  Energija: %+d"),
+				si->o.hitpoints, -si->powerUsage);
 		}
 	} else if (item->objectType < UNIT_MAX) {
 		const UnitInfo *ui = &g_table_unitInfo[item->objectType];
-		snprintf(text, sizeof(text), L10N("Armor: %u", "Gyvybes: %u"), ui->o.hitpoints);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 78, text, 110);
-		snprintf(text, sizeof(text), L10N("Power: %u", "Zala:    %u"), ui->damage);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 96, text, 110);
-		snprintf(text, sizeof(text), L10N("Speed: %u", "Greitis: %u"), ui->movingSpeedFactor);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 114, text, 110);
-		snprintf(text, sizeof(text), L10N("Range: %u", "Nuotolis:%u"), ui->fireDistance);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 132, text, 110);
-
-		if (g_factoryWindowStarport) {
-			snprintf(text, sizeof(text), L10N("In Stock: %d", "Sandelyje: %d"), item->objectInfo->available > 0 ? item->objectInfo->available : 0);
-			GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 152, text, 110);
-			snprintf(text, sizeof(text), L10N("Ordered:  %u", "Uzsakyta:  %u"), item->amount);
-			GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 168, text, 15);
-		} else {
-			const char *role = L10N("Combat Unit", "Kovinis vienetas");
-			if (item->objectType == UNIT_HARVESTER) role = L10N("Spice Harvester", "Prieskonio rink.");
-			else if (item->objectType == UNIT_MCV) role = L10N("Mobile Base", "Mobili baze");
-			else if (item->objectType == UNIT_CARRYALL) role = L10N("Air Transport", "Transport. orl.");
-			else if (ui->movementType == MOVEMENT_FOOT) role = L10N("Infantry", "Pestininkai");
-			GUI_3DS_DrawText(g_topScreenBuffer, 400, 224, 158, role, 15);
-		}
+		snprintf(line2, sizeof(line2), L10N("HP: %u  Pow: %u  Spd: %u", "HP: %u  Galia: %u  Grt: %u"),
+			ui->o.hitpoints, ui->damage, ui->movingSpeedFactor);
 	}
-
-	/* Bottom Hint Bar (Y: 196..234) */
-	GoldFrame(g_topScreenBuffer, 400, 8, 196, 384, 38, false);
-	if (g_factoryWindowStarport) {
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 18, 204, L10N("A: +1 unit   Y: -1 unit   X: Send Order", "A: +1 vnt.   Y: -1 vnt.   X: Siusti uzsakyma"), 15);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 18, 218, L10N("B: Cancel and return to game", "B: Atsaukti ir grizti i zaidima"), 110);
-	} else {
-		if (g_factoryWindowUpgradeCost > 0) {
-			snprintf(text, sizeof(text), L10N("X: Upgrade Structure (%u credits)", "X: Tobulinti pastata (%u kred.)"), g_factoryWindowUpgradeCost);
-			GUI_3DS_DrawText(g_topScreenBuffer, 400, 18, 204, text, 15);
-		} else {
-			GUI_3DS_DrawText(g_topScreenBuffer, 400, 18, 204, L10N("D-Pad / Stylus: Select item", "D-Pad / Stylus: Pasirinkti objekta"), 110);
+	if (line2[0] != '\0') {
+		int len2 = 0;
+		for (const unsigned char *p = (const unsigned char *)line2; *p; ) {
+			if (*p == 0xC4 || *p == 0xC5) p += 2; else p++;
+			len2++;
 		}
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, 18, 218, item->objectInfo->available > 0 ? L10N("A: Build This   B: Return to game", "A: Pradeti gamyba   B: Grizti i zaidima") : L10N("Structure Upgrade Required (Press X)", "Reikalingas pastato patobulinimas (X)"), 110);
+		int tx2 = max(90, 86 + (230 - len2 * 8) / 2);
+		GUI_3DS_DrawText(g_topScreenBuffer, 400, tx2 + 1, 215, line2, 0);
+		GUI_3DS_DrawText(g_topScreenBuffer, 400, tx2, 214, line2, 110);
 	}
 }
 
@@ -2490,31 +2529,66 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 			}
 		} else if (GUI_3DS_IsFactoryWindow()) {
 			int total = g_factoryWindowTotal;
-			if (touchY >= 168 && touchY < 198) {
-				if (g_factoryWindowStarport) {
-					if (touchX >= 8 && touchX < 104) { s_factoryFocus = total; s_factoryPending = total + 3; }      /* +1 */
-					else if (touchX >= 108 && touchX < 204) { s_factoryFocus = total + 1; s_factoryPending = total + 4; } /* -1 */
-					else if (touchX >= 208 && touchX < 312) { s_factoryFocus = total + 2; s_factoryPending = total; }     /* Send Order */
-				} else if (g_factoryWindowUpgradeCost > 0) {
-					if (touchX >= 8 && touchX < 160) { s_factoryFocus = total; s_factoryPending = total; }          /* Build This */
-					else if (touchX >= 164 && touchX < 312) { s_factoryFocus = total + 1; s_factoryPending = total + 2; } /* Upgrade */
-				} else {
-					s_factoryFocus = total;
-					s_factoryPending = total; /* Build This */
-				}
-			} else if (touchY >= 204 && touchY < 234) {
-				s_factoryPending = total + 1; /* Resume Game */
-			} else if (touchX >= 8 && touchX < 316 && touchY >= 8 && touchY < 164) {
-				int chosen = (s_factoryFocus < total) ? s_factoryFocus : (g_factoryWindowBase + g_factoryWindowSelected);
-				int firstRow = max(0, chosen / 4 - 2);
-				int idx = (firstRow + (touchY - 8) / 52) * 4 + (touchX - 8) / 77;
-				if (idx >= 0 && idx < total) {
-					if (s_factoryFocus == idx && !g_factoryWindowStarport) {
-						/* Double-tapping the already-selected item starts building it immediately! */
-						s_factoryPending = total;
+			if (touchY >= 200 && touchY <= 236) {
+				if (touchX >= 16 && touchX < 158) {
+					/* Left button: BUY (A) or ORDER */
+					if (g_factoryWindowStarport) {
+						if (g_factoryWindowOrdered > 0) {
+							s_factoryFocus = total;
+							s_factoryPending = total; /* ORDER */
+						}
 					} else {
-						s_factoryFocus = idx;
-						s_factoryPending = idx;
+						s_factoryPending = total; /* BUY highlighted item */
+					}
+				} else if (touchX >= 158 && touchX <= 304) {
+					/* Right button: BACK (B) */
+					s_factoryFocus = total + 1;
+					s_factoryPending = total + 1; /* Resume / Back */
+				}
+			} else if (!g_factoryWindowStarport && touchX >= 16 && touchX <= 304 && touchY >= 26 && touchY <= 185) {
+				/* Factory Grid tap */
+				for (int r = 0; r < SHOP_VISIBLE_ROWS; r++) {
+					int gy = 30 + r * 52;
+					if (touchY >= gy && touchY < gy + 48) {
+						for (int c = 0; c < SHOP_GRID_COLS; c++) {
+							int gx = 21 + c * 71;
+							if (touchX >= gx && touchX < gx + 64) {
+								int idx = (s_factoryScroll + r) * SHOP_GRID_COLS + c;
+								if (idx < total) {
+									if (s_factoryFocus == idx) {
+										s_factoryPending = total; /* Tap again builds immediately */
+									} else {
+										s_factoryFocus = idx;
+										s_factoryPending = idx;
+									}
+								}
+								break;
+							}
+						}
+						break;
+					}
+				}
+			} else if (g_factoryWindowStarport && touchX >= 16 && touchX <= 304 && touchY >= 20 && touchY <= 181) {
+				/* Starport Row tap */
+				for (int r = 0; r < SHOP_VISIBLE_ROWS; r++) {
+					int ry = 20 + r * 54;
+					if (touchY >= ry && touchY < ry + 54) {
+						int idx = s_factoryScroll + r;
+						if (idx < total) {
+							if (touchX >= 210 && touchX < 255 && touchY >= ry + 10 && touchY <= ry + 42) {
+								s_factoryFocus = idx;
+								s_factorySub = 0;
+								s_factoryPending = total + 3; /* + */
+							} else if (touchX >= 256 && touchX <= 300 && touchY >= ry + 10 && touchY <= ry + 42) {
+								s_factoryFocus = idx;
+								s_factorySub = 1;
+								s_factoryPending = total + 4; /* - */
+							} else {
+								s_factoryFocus = idx;
+								s_factoryPending = idx; /* select row */
+							}
+						}
+						break;
 					}
 				}
 			}

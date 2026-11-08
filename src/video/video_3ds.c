@@ -10,6 +10,7 @@
 #include "../gfx.h"
 #include "../gui/gui_3ds.h"
 #include "../gui/tactical_3ds.h"
+#include "../gui/shop_3ds.h"
 #include "../input/input_3ds.h"
 #include "../audio/midi.h"
 #include "../opendune.h"
@@ -29,6 +30,7 @@ static const uint8 s_goldBGR[10][3] = {
 static inline const uint8 *DisplayColor(uint8 col, uint8 ui)
 {
 	if (ui == TACTICAL_UI_MASK) return s_tacticalBGR[col < TC_COUNT ? col : TC_BLACK];
+	if (ui == SHOP_UI_MASK) return s_shopBGR[col < SP_COUNT ? col : SP_BLACK];
 	if (ui == 1) {
 		return (col >= 110 && col <= 119) ? s_goldBGR[col - 110] : &s_paletteBGR[col * 3];
 	}

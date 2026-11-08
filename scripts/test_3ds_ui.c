@@ -134,6 +134,7 @@ static void Preview(const char *name)
 		else if (y>=252 && x>=40 && x<360) { col=g_bottomScreenBuffer[(y-252)*320+x-40]; ui=g_bottomScreenUIMask[(y-252)*320+x-40]; }
 		if (ui==2 && col==216) { rgb[0]=220; rgb[1]=20; rgb[2]=20; }
 		else if (ui==TACTICAL_UI_MASK) {const uint8 *bgr=s_tacticalBGR[col<TC_COUNT ? col:TC_BLACK]; rgb[0]=bgr[2];rgb[1]=bgr[1];rgb[2]=bgr[0];}
+		else if (ui==SHOP_UI_MASK) {const uint8 *bgr=s_shopBGR[col<SP_COUNT ? col:SP_BLACK]; rgb[0]=bgr[2];rgb[1]=bgr[1];rgb[2]=bgr[0];}
 		else if (ui==1 && col>=110 && col<=119) memcpy(rgb,goldRGB[col-110],3);
 		else if (col==15) memset(rgb,255,3);
 		else if (col) {rgb[0]=col;rgb[1]=col;rgb[2]=col;}
@@ -209,11 +210,35 @@ int main(void)
 	GUI_3DS_RenderBottomScreen(); GUI_3DS_RenderTopScreen();
 	assert(!g_bottomScreenUIMask[15*320+28]); /* Original sprite palette survives. */
 	assert(!g_topScreenUIMask[82*400+16]); /* Original WSA palette survives. */
-	assert(g_bottomScreenUIMask[0]);
+	assert(g_bottomScreenUIMask[206*320+19] == SHOP_UI_MASK); /* Dedicated shop UI mask */
 	Preview("factory");
 	GUI_3DS_MenuInput(0,0,true); GUI_3DS_FactoryEvents(); assert(built==1);
-	GUI_3DS_MenuInput(0,1,false); GUI_3DS_MenuInput(0,1,true); GUI_3DS_FactoryEvents(); assert(resumed==1);
+	GUI_3DS_HandleBottomTouch(200, 215); GUI_3DS_FactoryEvents(); assert(resumed==1);
 	assert(details>=4);
+
+	/* Test Starport ordering mode: 1 unit per row with + / - and jump to ORDER / BACK */
+	g_factoryWindowStarport = true;
+	g_factoryWindowTotal = 4;
+	g_factoryWindowOrdered = 0;
+	for (int i = 0; i < 4; i++) {
+		g_factoryWindowItems[i].amount = 0;
+	}
+	GUI_3DS_FactoryBegin();
+	GUI_3DS_RenderBottomScreen(); GUI_3DS_RenderTopScreen();
+	Preview("starport");
+	/* Row 0, sub 0 is "+": press A to increment */
+	GUI_3DS_MenuInput(0, 0, true); GUI_3DS_FactoryEvents();
+	/* Press right to switch to "-" */
+	GUI_3DS_MenuInput(1, 0, false); GUI_3DS_FactoryEvents();
+	/* Press down until past last row: lands on ORDER (left) or BACK (right) */
+	for (int i = 0; i < 4; i++) GUI_3DS_MenuInput(0, 1, false);
+	GUI_3DS_FactoryEvents();
+	/* On bottom bar: switch to BACK and press A */
+	GUI_3DS_MenuInput(1, 0, false);
+	GUI_3DS_MenuInput(0, 0, true); GUI_3DS_FactoryEvents();
+	assert(resumed == 2);
+	g_factoryWindowStarport = false;
+
 	/* Item counts at row boundaries must keep native selection in [0,3]. */
 	const int counts[]={1,3,4,5,12,19,25};
 	for (unsigned c=0;c<sizeof(counts)/sizeof(counts[0]);c++) {
