@@ -29,6 +29,8 @@ static const uint8 s_goldBGR[10][3] = {
 
 static inline const uint8 *DisplayColor(uint8 col, uint8 ui)
 {
+	static const uint8 white[3]  = {255, 255, 255}; /* Pure white (cursor arrow, highlights) */
+	if (col == 254) return white;
 	if (ui == TACTICAL_UI_MASK) return s_tacticalBGR[col < TC_COUNT ? col : TC_BLACK];
 	if (ui == SHOP_UI_MASK) return s_shopBGR[col < SP_COUNT ? col : SP_BLACK];
 	if (ui == 1) {

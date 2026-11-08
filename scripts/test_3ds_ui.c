@@ -497,6 +497,28 @@ int main(void)
 	assert(g_bottomScreenUIMask[164*320+40]==2);
 	GUI_3DS_FillRect(g_bottomScreenBuffer,320,400,0,450,30,1); /* Offscreen must be harmless. */
 	GUI_3DS_DrawText(g_bottomScreenBuffer,320,0,0,"\xC4",1); /* Incomplete UTF-8 must not read past the string. */
+
+	/* Mouse cursor arrow must be pure white (color 254) with straight diagonal tail and mask 2. */
+	g_3dsModalMessageActive = false;
+	g_cursor3DS_X = 200;
+	g_cursor3DS_Y = 120;
+	GUI_3DS_RenderTopScreen();
+	assert(g_topScreenBuffer[120 * 400 + 200] == 0 && g_topScreenUIMask[120 * 400 + 200] == 2); /* Tip outline */
+	assert(g_topScreenBuffer[122 * 400 + 201] == 254 && g_topScreenUIMask[122 * 400 + 201] == 2); /* White body */
+	/* Verify straight tail: width 2 white fill at each diagonal step */
+	assert(g_topScreenBuffer[(120 + 10) * 400 + (200 + 4)] == 254);
+	assert(g_topScreenBuffer[(120 + 10) * 400 + (200 + 5)] == 254);
+	assert(g_topScreenBuffer[(120 + 11) * 400 + (200 + 5)] == 254);
+	assert(g_topScreenBuffer[(120 + 11) * 400 + (200 + 6)] == 254);
+	assert(g_topScreenBuffer[(120 + 12) * 400 + (200 + 6)] == 254);
+	assert(g_topScreenBuffer[(120 + 12) * 400 + (200 + 7)] == 254);
+	assert(g_topScreenBuffer[(120 + 13) * 400 + (200 + 7)] == 254);
+	assert(g_topScreenBuffer[(120 + 13) * 400 + (200 + 8)] == 254);
+	/* Tail cap at row 14: stepped diagonally, black outline */
+	assert(g_topScreenBuffer[(120 + 14) * 400 + (200 + 7)] == 0);
+	assert(g_topScreenBuffer[(120 + 14) * 400 + (200 + 8)] == 0);
+	assert(g_topScreenBuffer[(120 + 14) * 400 + (200 + 9)] == 0);
+
 	GUI_3DS_Uninit();
 	puts("3DS UI integration checks passed");
 	return 0;
