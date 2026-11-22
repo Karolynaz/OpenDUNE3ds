@@ -39,21 +39,21 @@ All screenshots below were captured directly from the Nintendo 3DS build running
 | Title Screen | House Selection |
 | :---: | :---: |
 | ![Title Screen](docs/screenshots/title.png) | ![House Selection](docs/screenshots/house_selection.png) |
-| *Classic Dune II title art up top with a clean, centered 3DS menu below.* | *Pick House Atreides, Ordos, or Harkonnen with crests and lore across both screens.* |
+| *Title menu* | *House selection* |
 
-### Level 9 Gameplay — Tanks, Squad Selection & Harvesting
+### Gameplay
 
-| Level 9 Army & Multi-Unit Selection | Level 9 Spice Harvesting |
+| Multi-Unit Selection | Spice Harvesting |
 | :---: | :---: |
 | ![Level 9 Gameplay with Tanks](docs/screenshots/gameplay_tanks.png) | ![Level 9 Spice Harvesting](docs/screenshots/gameplay_harvesting.png) |
-| *Commanding 11 Harkonnen units (Devastators, Siege Tanks, Launchers, Carryall, Quad, Troopers) with squad cards on the bottom screen.* | *Active spice harvesting beside Windtraps, Radar Outpost, and Starport—with the crisp circular Dune II target reticle on the top screen.* |
+| *Harkonnen units* | *Harvesting * |
 
 ### Building Construction, Buying Tanks & House Palace
 
-| Construction Yard Menu | Heavy Factory (Buying Tanks) | House Palace & Superweapon |
+| Construction Yard Menu | Heavy Factory | House Palace & Superweapon |
 | :---: | :---: | :---: |
 | ![Construction Yard Menu](docs/screenshots/construction_menu.png) | ![Heavy Factory Tank Menu](docs/screenshots/factory_tanks.png) | ![Harkonnen Palace](docs/screenshots/palace.png) |
-| *Custom dual-screen CHOAM construction UI showing building art, armor/power stats, and a 4×3 grid.* | *Ordering Devastators, Siege Tanks, Launchers, Harvesters, and MCVs straight from the Heavy Factory.* | *Selecting the Palace shows your House superweapon portrait (Death Hand, Fremen, or Saboteur) ready to launch with `Y`.* |
+| *Custom dual-screen CHOAM construction UI* | *Ordering Devastator straight from the Heavy Factory.* | *Superweapon* |
 
 ---
 
