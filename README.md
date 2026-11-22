@@ -39,21 +39,19 @@ All screenshots below were captured directly from the Nintendo 3DS build running
 | Title Screen | House Selection |
 | :---: | :---: |
 | ![Title Screen](docs/screenshots/title.png) | ![House Selection](docs/screenshots/house_selection.png) |
-| *Title menu* | *House selection* |
 
 ### Gameplay
 
 | Multi-Unit Selection | Spice Harvesting |
 | :---: | :---: |
 | ![Level 9 Gameplay with Tanks](docs/screenshots/gameplay_tanks.png) | ![Level 9 Spice Harvesting](docs/screenshots/gameplay_harvesting.png) |
-| *Harkonnen units* | *Harvesting * |
 
 ### Building Construction, Buying Tanks & House Palace
 
 | Construction Yard Menu | Heavy Factory | House Palace & Superweapon |
 | :---: | :---: | :---: |
 | ![Construction Yard Menu](docs/screenshots/construction_menu.png) | ![Heavy Factory Tank Menu](docs/screenshots/factory_tanks.png) | ![Harkonnen Palace](docs/screenshots/palace.png) |
-| *Custom dual-screen CHOAM construction UI* | *Ordering Devastator straight from the Heavy Factory.* | *Superweapon* |
+| *Custom dual-screen CHOAM construction UI* | *Ordering Devastator from the Heavy Factory* | *Superweapon* |
 
 ---
 
