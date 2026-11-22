@@ -2,7 +2,7 @@
   <img src="os/banner/banner_256x128.png" alt="Dune II 3DS Banner" width="512">
 </p>
 
-<h1 align="center">Dune II for Nintendo 3DS (OpenDUNE3ds)</h1>
+<h1 align="center">OpenDUNE3ds (Dune II for Nintendo 3DS)</h1>
 
 <p align="center">
   <strong>The 1992 godfather of real-time strategy, rebuilt around Nintendo 3DS's two screens and modern handheld controls.</strong>
