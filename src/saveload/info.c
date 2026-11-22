@@ -34,7 +34,7 @@ static uint32 SaveLoad_StructureActive(void *object, uint32 value, bool loading)
 	VARIABLE_NOT_USED(object);
 
 	if (loading) {
-		if ((uint16)value != 0xFFFF) {
+		if (value < STRUCTURE_INDEX_MAX_HARD) {
 			g_structureActive = Structure_Get_ByIndex((uint16)value);
 		} else {
 			g_structureActive = NULL;
@@ -43,7 +43,7 @@ static uint32 SaveLoad_StructureActive(void *object, uint32 value, bool loading)
 	}
 
 	if (g_structureActiveType != 0xFFFF) {
-		return g_structureActive->o.index;
+		return g_structureActive != NULL ? g_structureActive->o.index : 0xFFFF;
 	} else {
 		return 0xFFFF;
 	}
@@ -164,6 +164,10 @@ bool Info_Load(FILE *fp, uint32 length)
 {
 	if (SaveLoad_GetLength(s_saveInfo) != length) return false;
 	if (!SaveLoad_Load(s_saveInfo, fp, NULL)) return false;
+	if (g_scenario.mapScale >= 3 || g_selectionTypeNew >= SELECTIONTYPE_MAX ||
+			g_minimapPosition >= 4096 ||
+			(g_structureActiveType != 0xFFFF &&
+			 (g_structureActiveType >= STRUCTURE_MAX || g_structureActive == NULL))) return false;
 
 	g_viewportPosition = g_minimapPosition;
 	g_selectionPosition = g_selectionRectanglePosition;

@@ -19,7 +19,9 @@
 #include "scenario.h"
 #include "sprites.h"
 #include "structure.h"
+#include "table/strings.h"
 #include "tile.h"
+#include "timer.h"
 #include "tools.h"
 #include "unit.h"
 
@@ -34,6 +36,10 @@ int16 g_boxSelectStartX = 0;
 int16 g_boxSelectStartY = 0;
 int16 g_boxSelectCurrX = 0;
 int16 g_boxSelectCurrY = 0;
+
+static Unit *s_lastClickedUnit = NULL;
+static uint32 s_lastUnitClickTick = 0;
+#define DOUBLE_CLICK_TICKS 36 /* ~0.60 s at 60 Hz g_timerGUI */
 
 Structure *g_3dsRequestedOpenFactory = NULL;
 Structure *g_3dsRequestedStartPlacement = NULL;
@@ -50,6 +56,8 @@ void Unit_3DS_Init(void)
 	memset(s_controlGroups, 0, sizeof(s_controlGroups));
 	memset(g_controlGroupCounts, 0, sizeof(g_controlGroupCounts));
 	g_boxSelectActive = false;
+	s_lastClickedUnit = NULL;
+	s_lastUnitClickTick = 0;
 	g_3dsRequestedOpenFactory = NULL;
 	g_3dsRequestedStartPlacement = NULL;
 	g_3dsRequestedOptions = false;
@@ -59,6 +67,7 @@ void Unit_3DS_Init(void)
 /* Remove pool references before a slot can be recycled for another unit. */
 void Unit_3DS_ForgetUnit(Unit *u)
 {
+	if (s_lastClickedUnit == u) s_lastClickedUnit = NULL;
 	for (uint16 group = 0; group < MAX_CONTROL_GROUPS; group++) {
 		uint16 count = 0;
 		for (uint16 i = 0; i < g_controlGroupCounts[group]; i++) {
@@ -81,6 +90,7 @@ void Unit_3DS_ForgetUnit(Unit *u)
 
 void Unit_3DS_DeselectUnits(void)
 {
+	s_lastClickedUnit = NULL;
 	for (uint16 i = 0; i < g_selectedUnitsCount; i++) {
 		if (g_selectedUnits[i] != NULL && g_selectedUnits[i]->o.flags.s.allocated) {
 			Unit_UpdateMap(2, g_selectedUnits[i]);
@@ -256,7 +266,7 @@ void Unit_3DS_AddUnitToSelection(Unit *u)
 		if (g_unitSelected == NULL) {
 			g_unitSelected = u;
 			Unit_DisplayStatusText(u);
-			GUI_ChangeSelectionType(SELECTIONTYPE_UNIT);
+			GUI_ChangeSelectionType(g_unitSelected != NULL ? SELECTIONTYPE_UNIT : SELECTIONTYPE_STRUCTURE);
 		}
 	}
 }
@@ -335,8 +345,36 @@ void Unit_3DS_FinishBoxSelection(void)
 
 	if (g_selectedUnitsCount > 0) {
 		Sound_StartSound(18); /* "Reporting" */
-		GUI_ChangeSelectionType(SELECTIONTYPE_UNIT);
+		GUI_ChangeSelectionType(g_unitSelected != NULL ? SELECTIONTYPE_UNIT : SELECTIONTYPE_STRUCTURE);
 	}
+}
+
+/* Group infantry/trooper squads together with their damaged single-man variants. */
+static uint8 Unit_3DS_CanonicalUnitType(uint8 type)
+{
+	if (type == UNIT_INFANTRY || type == UNIT_SOLDIER) return UNIT_SOLDIER;
+	if (type == UNIT_TROOPERS || type == UNIT_TROOPER) return UNIT_TROOPER;
+	return type;
+}
+
+static bool Unit_3DS_IsUnitVisibleOnScreen(const Unit *u)
+{
+	if (u == NULL || !u->o.flags.s.allocated || u->o.flags.s.isNotOnMap) return false;
+	if (u->o.houseID != g_playerHouseID || u->o.type >= UNIT_MAX) return false;
+
+	const UnitInfo *ui = &g_table_unitInfo[u->o.type];
+	if (!ui->flags.isNormalUnit || ui->flags.isBullet) return false;
+	if (!g_debugScenario && !g_map[Tile_PackTile(u->o.position)].isUnveiled) return false;
+
+	/* The renderer centers sprites on their map positions. Include partial
+	 * sprites at every edge, but exclude the padded off-screen render area. */
+	int x = (u->o.position.x >> 4) - (Tile_GetPackedX(g_viewportPosition) * 16);
+	int y = (u->o.position.y >> 4) - (Tile_GetPackedY(g_viewportPosition) * 16);
+	int radius = max(1, (ui->dimension + 1) / 2);
+	if (x + radius <= 0 || x - radius >= VIEWPORT_TILES_X * 16 ||
+	    y + radius <= 0 || y - radius >= VIEWPORT_TILES_Y * 16) return false;
+
+	return true;
 }
 
 void Unit_3DS_SelectAllVisibleUnits(void)
@@ -351,27 +389,46 @@ void Unit_3DS_SelectAllVisibleUnits(void)
 	while (true) {
 		Unit *u = Unit_Find(&find);
 		if (u == NULL) break;
-		if (!u->o.flags.s.allocated || u->o.flags.s.isNotOnMap) continue;
-
-        if(u->o.houseID!=g_playerHouseID || u->o.type>=UNIT_MAX) continue;
-        const UnitInfo *ui=&g_table_unitInfo[u->o.type];
-        if(!ui->flags.isNormalUnit || ui->flags.isBullet) continue;
-        if(!g_debugScenario && !g_map[Tile_PackTile(u->o.position)].isUnveiled) continue;
-
-        /* The renderer centers sprites on their map positions. Include partial
-         * sprites at every edge, but exclude the padded off-screen render area. */
-        int x=(u->o.position.x>>4)-(Tile_GetPackedX(g_viewportPosition)*16);
-        int y=(u->o.position.y>>4)-(Tile_GetPackedY(g_viewportPosition)*16);
-        int radius=max(1,(ui->dimension+1)/2);
-        if(x+radius<=0 || x-radius>=VIEWPORT_TILES_X*16 ||
-           y+radius<=0 || y-radius>=VIEWPORT_TILES_Y*16) continue;
+		if (!Unit_3DS_IsUnitVisibleOnScreen(u)) continue;
 
 		Unit_3DS_AddUnitToSelection(u);
 	}
 
 	if (g_selectedUnitsCount > 0) {
 		Sound_StartSound(18);
-		GUI_ChangeSelectionType(SELECTIONTYPE_UNIT);
+		GUI_ChangeSelectionType(g_unitSelected != NULL ? SELECTIONTYPE_UNIT : SELECTIONTYPE_STRUCTURE);
+	}
+}
+
+void Unit_3DS_SelectAllVisibleUnitsOfType(Unit *anchor)
+{
+	if (anchor == NULL || !anchor->o.flags.s.allocated || anchor->o.flags.s.isNotOnMap ||
+	    anchor->o.houseID != g_playerHouseID || anchor->o.type >= UNIT_MAX) {
+		return;
+	}
+
+	uint8 targetClass = Unit_3DS_CanonicalUnitType(anchor->o.type);
+
+	Unit_3DS_ClearSelection();
+	Unit_3DS_AddUnitToSelection(anchor);
+
+	PoolFindStruct find;
+	find.houseID = g_playerHouseID;
+	find.index   = 0xFFFF;
+	find.type    = 0xFFFF;
+
+	while (true) {
+		Unit *u = Unit_Find(&find);
+		if (u == NULL) break;
+		if (!Unit_3DS_IsUnitVisibleOnScreen(u)) continue;
+		if (Unit_3DS_CanonicalUnitType(u->o.type) != targetClass) continue;
+
+		Unit_3DS_AddUnitToSelection(u);
+	}
+
+	if (g_selectedUnitsCount > 0) {
+		Sound_StartSound(18);
+		GUI_ChangeSelectionType(g_unitSelected != NULL ? SELECTIONTYPE_UNIT : SELECTIONTYPE_STRUCTURE);
 	}
 }
 
@@ -421,7 +478,7 @@ void Unit_3DS_RecallGroup(uint8 groupIndex)
 		GUI_3DS_CenterCameraOnTile(avgX, avgY);
 
 		Sound_StartSound(18); /* "Reporting" */
-		GUI_ChangeSelectionType(SELECTIONTYPE_UNIT);
+		GUI_ChangeSelectionType(g_unitSelected != NULL ? SELECTIONTYPE_UNIT : SELECTIONTYPE_STRUCTURE);
 	}
 }
 
@@ -459,7 +516,19 @@ bool Unit_3DS_PlaceActiveStructure(void)
 	if (g_structureActive == NULL || g_selectionType != SELECTIONTYPE_PLACE) return false;
 
 	Structure *placed = g_structureActive;
-	if (Structure_Place(placed, g_selectionPosition)) {
+	const uint16 concreteHint = STR_THERE_ISNT_ENOUGH_OPEN_CONCRETE_TO_PLACE_THIS_STRUCTURE_YOU_MAY_PROCEED_BUT_WITHOUT_ENOUGH_CONCRETE_THE_BUILDING_WILL_NEED_REPAIRS;
+	/* The existing saved hint bit also tracks a first placement with sufficient concrete. */
+	const uint32 concreteHintBit = (uint32)1 << (concreteHint -
+		STR_YOU_MUST_BUILD_A_WINDTRAP_TO_PROVIDE_POWER_TO_YOUR_BASE_WITHOUT_POWER_YOUR_STRUCTURES_WILL_DECAY);
+	bool firstBuilding = g_campaignID == 0 && g_scenarioID == 1 && !(g_hintsShown1 & concreteHintBit) &&
+		placed->o.type != STRUCTURE_SLAB_1x1 && placed->o.type != STRUCTURE_SLAB_2x2 &&
+		placed->o.type != STRUCTURE_WALL;
+	uint16 position = g_selectionPosition;
+	if (firstBuilding && position != 0xFFFF && Structure_IsValidBuildLocation(position, placed->o.type) < 0) {
+		GUI_DisplayHint(concreteHint, g_table_structureInfo[placed->o.type].o.spriteID);
+	}
+	if (Structure_Place(placed, position)) {
+		if (firstBuilding) g_hintsShown1 |= concreteHintBit;
 		Voice_Play(20);
 
 		if (placed->o.type == STRUCTURE_PALACE) {
@@ -562,6 +631,26 @@ bool Unit_3DS_BuildStructureObject(Structure *s)
 	return started;
 }
 
+static void Unit_3DS_HandleUnitClick(Unit *targetUnit)
+{
+	if (targetUnit == NULL || !targetUnit->o.flags.s.allocated || targetUnit->o.flags.s.isNotOnMap || targetUnit->o.houseID != g_playerHouseID) {
+		return;
+	}
+
+	bool isDoubleClick = (s_lastClickedUnit == targetUnit &&
+	                      (uint32)(g_timerGUI - s_lastUnitClickTick) <= DOUBLE_CLICK_TICKS);
+	if (isDoubleClick) {
+		s_lastClickedUnit = NULL;
+		Unit_3DS_SelectAllVisibleUnitsOfType(targetUnit);
+		return;
+	}
+
+	Unit_3DS_SelectSingle(targetUnit);
+	s_lastClickedUnit = targetUnit;
+	s_lastUnitClickTick = g_timerGUI;
+	Sound_StartSound(18);
+}
+
 void Unit_3DS_SmartAction(uint16 packedTile)
 {
 	Unit *targetUnit = Unit_Get_ByPackedTile(packedTile);
@@ -572,43 +661,58 @@ void Unit_3DS_SmartAction(uint16 packedTile)
 	if (!hasUnitsSelected) {
 		if (g_selectedUnitsCount > 0) Unit_3DS_DeselectUnits();
 
-		if (targetUnit != NULL && targetUnit->o.houseID == g_playerHouseID) {
-			Unit_3DS_SelectSingle(targetUnit);
-			Sound_StartSound(18);
-			return;
-		}
-		if (targetStructure != NULL && targetStructure->o.houseID == g_playerHouseID) {
-			bool alreadySelected = (Unit_3DS_GetSelectedStructure() == targetStructure);
-
-			if (alreadySelected) {
-				/* Double-click / second press on selected factory or yard: */
-				if (targetStructure->o.type == STRUCTURE_CONSTRUCTION_YARD && targetStructure->o.linkedID != STRUCTURE_INVALID && targetStructure->countDown == 0 && Unit_3DS_StartPlacement(targetStructure)) {
-					return;
-				}
-				if (g_table_structureInfo[targetStructure->o.type].o.flags.factory) {
-					Unit_3DS_OpenFactory(targetStructure);
-					return;
-				}
-				if (targetStructure->o.type == STRUCTURE_PALACE && targetStructure->countDown == 0) {
-					Structure_ActivateSpecial(targetStructure);
-					return;
-				}
+		if (targetUnit != NULL && targetUnit->o.flags.s.allocated && !targetUnit->o.flags.s.isNotOnMap) {
+			if (targetUnit->o.houseID == g_playerHouseID) {
+				Unit_3DS_HandleUnitClick(targetUnit);
+				return;
 			}
-
-			/* First click on structure: select it */
-			Unit_3DS_SelectStructure(targetStructure);
-			Sound_StartSound(20);
-			return;
+			if ((targetUnit->o.seenByHouses & (1 << g_playerHouseID)) != 0 || g_debugScenario) {
+				Unit_3DS_ClearSelection();
+				g_unitSelected = targetUnit;
+				GUI_ChangeSelectionType(SELECTIONTYPE_UNIT);
+				Sound_StartSound(20);
+				return;
+			}
 		}
+		if (targetStructure != NULL && targetStructure->o.flags.s.allocated && !targetStructure->o.flags.s.isNotOnMap) {
+			if (targetStructure->o.houseID == g_playerHouseID) {
+				bool alreadySelected = (Unit_3DS_GetSelectedStructure() == targetStructure);
+
+				if (alreadySelected) {
+					/* Double-click / second press on selected factory or yard: */
+					if (targetStructure->o.type == STRUCTURE_CONSTRUCTION_YARD && targetStructure->o.linkedID != STRUCTURE_INVALID && targetStructure->countDown == 0 && Unit_3DS_StartPlacement(targetStructure)) {
+						return;
+					}
+					if (g_table_structureInfo[targetStructure->o.type].o.flags.factory) {
+						Unit_3DS_OpenFactory(targetStructure);
+						return;
+					}
+					if (targetStructure->o.type == STRUCTURE_PALACE && targetStructure->countDown == 0) {
+						Structure_ActivateSpecial(targetStructure);
+						return;
+					}
+				}
+
+				/* First click on structure: select it */
+				Unit_3DS_SelectStructure(targetStructure);
+				Sound_StartSound(20);
+				return;
+			}
+			if ((targetStructure->o.seenByHouses & (1 << g_playerHouseID)) != 0 || g_debugScenario) {
+				Unit_3DS_SelectStructure(targetStructure);
+				Sound_StartSound(20);
+				return;
+			}
+		}
+		s_lastClickedUnit = NULL;
 		return;
 	}
 
 	/* Scenario 2: Units are selected -> Issue Smart Order */
 
-	/* If clicking on a friendly unit on this exact tile, select that unit instead */
+	/* If clicking on a friendly unit on this exact tile, select it (or double-click to select same type) */
 	if (targetUnit != NULL && targetUnit->o.houseID == g_playerHouseID) {
-		Unit_3DS_SelectSingle(targetUnit);
-		Sound_StartSound(18);
+		Unit_3DS_HandleUnitClick(targetUnit);
 		return;
 	}
 
@@ -666,6 +770,20 @@ void Unit_3DS_SmartAction(uint16 packedTile)
 	Unit_3DS_IssueCommand(ACTION_MOVE, packedTile);
 }
 
+void Unit_3DS_CancelTarget(void)
+{
+	if (g_unitHouseMissile != NULL && g_unitHouseMissile->o.houseID == g_playerHouseID) {
+		Unit *missile = g_unitHouseMissile;
+		g_unitHouseMissile = NULL;
+		g_houseMissileCountdown = 0;
+		Unit_Free(missile);
+		Sound_Output_Feedback(0xFFFE);
+	}
+	g_unitActive = NULL;
+	g_activeAction = 0xFFFF;
+	GUI_ChangeSelectionType(g_unitSelected != NULL ? SELECTIONTYPE_UNIT : SELECTIONTYPE_STRUCTURE);
+}
+
 void Unit_3DS_IssueCommand(ActionType action, uint16 packedTile)
 {
 	if (g_unitHouseMissile != NULL) {
@@ -674,6 +792,8 @@ void Unit_3DS_IssueCommand(ActionType action, uint16 packedTile)
 	}
 
 	if (g_selectedUnitsCount == 0 || action >= ACTION_MAX) return;
+
+	s_lastClickedUnit = NULL;
 
 	static const int8 formationOffsets[16][2] = {
 		{ 0,  0}, { 1,  0}, {-1,  0}, { 0,  1},
@@ -729,7 +849,7 @@ void Unit_3DS_IssueCommand(ActionType action, uint16 packedTile)
 	if (g_selectionType == SELECTIONTYPE_TARGET) {
 		g_unitActive = NULL;
 		g_activeAction = 0xFFFF;
-		GUI_ChangeSelectionType(SELECTIONTYPE_UNIT);
+		GUI_ChangeSelectionType(g_unitSelected != NULL ? SELECTIONTYPE_UNIT : SELECTIONTYPE_STRUCTURE);
 	}
 
 	if (action == ACTION_ATTACK) {

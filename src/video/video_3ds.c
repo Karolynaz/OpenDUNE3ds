@@ -11,6 +11,7 @@
 #include "../gui/gui_3ds.h"
 #include "../gui/tactical_3ds.h"
 #include "../gui/shop_3ds.h"
+#include "../gui/popup_3ds.h"
 #include "../input/input_3ds.h"
 #include "../audio/midi.h"
 #include "../opendune.h"
@@ -26,6 +27,8 @@ static const uint8 s_goldBGR[10][3] = {
 	{14,40,65}, {18,64,97}, {21,103,158}, {22,117,177}, {25,132,191},
 	{28,146,205}, {28,151,215}, {43,173,231}, {80,200,248}, {151,226,255}
 };
+static uint32 s_maskLUT32[8][256];
+static uint32 s_maskDimLUT32[8][256];
 
 static inline const uint8 *DisplayColor(uint8 col, uint8 ui)
 {
@@ -33,6 +36,7 @@ static inline const uint8 *DisplayColor(uint8 col, uint8 ui)
 	if (col == 254) return white;
 	if (ui == TACTICAL_UI_MASK) return s_tacticalBGR[col < TC_COUNT ? col : TC_BLACK];
 	if (ui == SHOP_UI_MASK) return s_shopBGR[col < SP_COUNT ? col : SP_BLACK];
+	if (ui == POPUP_UI_MASK) return s_popupBGR[col < POPUP_COUNT ? col : POPUP_BLACK];
 	if (ui == 1) {
 		return (col >= 110 && col <= 119) ? s_goldBGR[col - 110] : &s_paletteBGR[col * 3];
 	}
@@ -63,6 +67,28 @@ static inline const uint8 *DisplayColor(uint8 col, uint8 ui)
 	return &s_paletteBGR[col * 3];
 }
 
+static void Video_RebuildMaskLUTsRange(int from, int to)
+{
+	if (from < 0) from = 0;
+	if (to > 256) to = 256;
+	for (int m = 0; m < 8; m++) {
+		uint8 mask = (m < 6) ? (uint8)m : 0;
+		for (int c = from; c < to; c++) {
+			const uint8 *bgr = DisplayColor((uint8)c, mask);
+			s_maskLUT32[m][c] = (uint32)bgr[0] | ((uint32)bgr[1] << 8) | ((uint32)bgr[2] << 16);
+			uint32 db = (uint32)((bgr[0] * 140) >> 8);
+			uint32 dg = (uint32)((bgr[1] * 140) >> 8);
+			uint32 dr = (uint32)((bgr[2] * 140) >> 8);
+			s_maskDimLUT32[m][c] = db | (dg << 8) | (dr << 16);
+		}
+	}
+}
+
+static void Video_RebuildMaskLUTs(void)
+{
+	Video_RebuildMaskLUTsRange(0, 256);
+}
+
 bool Video_Init(int screen_magnification, VideoScaleFilter filter)
 {
 	VARIABLE_NOT_USED(screen_magnification);
@@ -70,6 +96,7 @@ bool Video_Init(int screen_magnification, VideoScaleFilter filter)
 
 	if (s_video_initialized) return true;
 
+	osSetSpeedupEnable(true);
 	gfxInitDefault();
 	gfxSetDoubleBuffering(GFX_TOP, true);
 	gfxSetDoubleBuffering(GFX_BOTTOM, true);
@@ -95,6 +122,7 @@ bool Video_Init(int screen_magnification, VideoScaleFilter filter)
 	s_paletteBGR[15 * 3 + 0] = 255;
 	s_paletteBGR[15 * 3 + 1] = 255;
 	s_paletteBGR[15 * 3 + 2] = 255;
+	Video_RebuildMaskLUTs();
 
 	s_video_initialized = true;
 	return true;
@@ -114,12 +142,15 @@ void Video_Uninit(void)
 	}
 
 	gfxExit();
+	osSetSpeedupEnable(false);
 }
 
 void Video_SetPalette(void *palette, int from, int length)
 {
 	const uint8 *p = (const uint8 *)palette;
-	for (int i = from; i < from + length && i < 256; i++) {
+	int to = from + length;
+	if (to > 256) to = 256;
+	for (int i = from; i < to; i++) {
 		/* Convert 6-bit DOS VGA color component to 8-bit */
 		uint8 r = (((*p++) & 0x3F) * 0x41) >> 4;
 		uint8 g = (((*p++) & 0x3F) * 0x41) >> 4;
@@ -129,6 +160,7 @@ void Video_SetPalette(void *palette, int from, int length)
 		s_paletteBGR[i * 3 + 1] = g;
 		s_paletteBGR[i * 3 + 2] = r;
 	}
+	Video_RebuildMaskLUTsRange(from, to);
 }
 
 void Video_Mouse_SetPosition(uint16 x, uint16 y)
@@ -156,6 +188,35 @@ void *Video_GetFrameBuffer(uint16 size)
 	return s_framebuffer;
 }
 
+static void Video_BlitRotatedBGR8(u8 *fb, const uint8 *src, const uint8 *maskBuf, int width, const uint32 lut[8][256])
+{
+	const int stride = width;
+	const int stride2 = width * 2;
+	const int stride3 = width * 3;
+	const int stride4 = width * 4;
+	for (int x0 = 0; x0 < width; x0 += 16) {
+		int xEnd = x0 + 16;
+		if (xEnd > width) xEnd = width;
+		for (int x = x0; x < xEnd; x++) {
+			const uint8 *s = src + 239 * stride + x;
+			const uint8 *m = maskBuf + 239 * stride + x;
+			uint32 *dst32 = (uint32 *)(fb + x * 720);
+			for (int cnt = 60; cnt > 0; cnt--) {
+				uint32 c0 = lut[m[0] & 7][s[0]];
+				uint32 c1 = lut[m[-stride] & 7][s[-stride]];
+				uint32 c2 = lut[m[-stride2] & 7][s[-stride2]];
+				uint32 c3 = lut[m[-stride3] & 7][s[-stride3]];
+				dst32[0] = c0 | (c1 << 24);
+				dst32[1] = (c1 >> 8) | (c2 << 16);
+				dst32[2] = (c2 >> 16) | (c3 << 8);
+				dst32 += 3;
+				s -= stride4;
+				m -= stride4;
+			}
+		}
+	}
+}
+
 void Video_Tick(void)
 {
 	if (!s_video_initialized) return;
@@ -177,34 +238,53 @@ void Video_Tick(void)
 	u16 botW, botH;
 	u8 *fbBot = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, &botW, &botH);
 
+	const bool modalActive = g_3dsModalMessageActive;
+
 	/* Top Screen: 400x240 to 240x400 rotated BGR8 */
 	if (fbTop != NULL && g_topScreenBuffer != NULL) {
-		for (int x = 0; x < TOP_WIDTH; x++) {
-			u8 *dst = fbTop + x * (240 * 3);
-			for (int y = 239; y >= 0; y--) {
-				u8 col = g_topScreenBuffer[y * TOP_WIDTH + x];
-				const u8 *bgr = DisplayColor(col, g_topScreenUIMask[y * TOP_WIDTH + x]);
-				dst[0] = bgr[0];
-				dst[1] = bgr[1];
-				dst[2] = bgr[2];
-				dst += 3;
+		if (!modalActive) {
+			Video_BlitRotatedBGR8(fbTop, g_topScreenBuffer, g_topScreenUIMask, TOP_WIDTH, s_maskLUT32);
+		} else {
+			const int px0 = (TOP_WIDTH - POPUP_WIDTH) / 2;
+			const int py0 = (TOP_HEIGHT - POPUP_HEIGHT) / 2;
+			const int px1 = px0 + POPUP_WIDTH;
+			const int py1 = py0 + POPUP_HEIGHT;
+			const int stride = TOP_WIDTH;
+			const int stride2 = TOP_WIDTH * 2;
+			const int stride3 = TOP_WIDTH * 3;
+			const int stride4 = TOP_WIDTH * 4;
+			for (int x0 = 0; x0 < TOP_WIDTH; x0 += 16) {
+				int xEnd = x0 + 16;
+				if (xEnd > TOP_WIDTH) xEnd = TOP_WIDTH;
+				for (int x = x0; x < xEnd; x++) {
+					bool inX = (x >= px0 && x < px1);
+					const uint8 *s = g_topScreenBuffer + 239 * stride + x;
+					const uint8 *m = g_topScreenUIMask + 239 * stride + x;
+					uint32 *dst32 = (uint32 *)(fbTop + x * 720);
+					for (int yTop = 239; yTop >= 3; yTop -= 4) {
+						const uint32 (*in0)[256] = (inX && yTop >= py0 && yTop < py1) ? s_maskLUT32 : s_maskDimLUT32;
+						const uint32 (*in1)[256] = (inX && (yTop - 1) >= py0 && (yTop - 1) < py1) ? s_maskLUT32 : s_maskDimLUT32;
+						const uint32 (*in2)[256] = (inX && (yTop - 2) >= py0 && (yTop - 2) < py1) ? s_maskLUT32 : s_maskDimLUT32;
+						const uint32 (*in3)[256] = (inX && (yTop - 3) >= py0 && (yTop - 3) < py1) ? s_maskLUT32 : s_maskDimLUT32;
+						uint32 c0 = in0[m[0] & 7][s[0]];
+						uint32 c1 = in1[m[-stride] & 7][s[-stride]];
+						uint32 c2 = in2[m[-stride2] & 7][s[-stride2]];
+						uint32 c3 = in3[m[-stride3] & 7][s[-stride3]];
+						dst32[0] = c0 | (c1 << 24);
+						dst32[1] = (c1 >> 8) | (c2 << 16);
+						dst32[2] = (c2 >> 16) | (c3 << 8);
+						dst32 += 3;
+						s -= stride4;
+						m -= stride4;
+					}
+				}
 			}
 		}
 	}
 
 	/* Bottom Screen: 320x240 to 240x320 rotated BGR8 */
 	if (fbBot != NULL && g_bottomScreenBuffer != NULL) {
-		for (int x = 0; x < BOTTOM_WIDTH; x++) {
-			u8 *dst = fbBot + x * (240 * 3);
-			for (int y = 239; y >= 0; y--) {
-				u8 col = g_bottomScreenBuffer[y * BOTTOM_WIDTH + x];
-				const u8 *bgr = DisplayColor(col, g_bottomScreenUIMask[y * BOTTOM_WIDTH + x]);
-				dst[0] = bgr[0];
-				dst[1] = bgr[1];
-				dst[2] = bgr[2];
-				dst += 3;
-			}
-		}
+		Video_BlitRotatedBGR8(fbBot, g_bottomScreenBuffer, g_bottomScreenUIMask, BOTTOM_WIDTH, modalActive ? s_maskDimLUT32 : s_maskLUT32);
 	}
 
 	gfxFlushBuffers();

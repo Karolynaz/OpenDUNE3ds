@@ -56,6 +56,8 @@ static bool fwrite_tile(const Tile *t, FILE *fp)
  */
 bool Map_Load(FILE *fp, uint32 length)
 {
+	if (length % 6 != 0) return false;
+
 	uint16 i;
 
 	for (i = 0; i < 0x1000; i++) {

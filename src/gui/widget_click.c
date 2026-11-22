@@ -527,7 +527,7 @@ static void GUI_Window_Create(WindowDesc *desc)
 	}
 
 	if (s_savegameCountOnDisk >= 5 && desc->addArrows) {
-		Widget *w = &g_table_windowWidgets[7];
+		Widget *w = &g_table_windowWidgets[8];
 
 		w->drawParameterNormal.sprite   = g_sprites[59];
 		w->drawParameterSelected.sprite = g_sprites[60];
@@ -541,7 +541,7 @@ static void GUI_Window_Create(WindowDesc *desc)
 
 		g_widgetLinkedListTail = GUI_Widget_Link(g_widgetLinkedListTail, w);
 
-		w = &g_table_windowWidgets[8];
+		w = &g_table_windowWidgets[9];
 
 		w->drawParameterNormal.sprite   = g_sprites[61];
 		w->drawParameterSelected.sprite = g_sprites[62];
@@ -590,7 +590,7 @@ static void GUI_Window_RestoreScreen(WindowDesc *desc)
  *
  * @param w The widget.
  */
-static void GUI_Widget_GameControls_Click(Widget *w)
+void GUI_Widget_GameControls_Click(Widget *w)
 {
 	WindowDesc *desc = &g_gameControlWindowDesc;
 	bool loop;
@@ -604,6 +604,7 @@ static void GUI_Widget_GameControls_Click(Widget *w)
 		uint16 key = GUI_Widget_HandleEvents(w2);
 
 		if ((key & 0x8000) != 0) {
+			bool refreshAll = false;
 			w = GUI_Widget_Get_ByIndex(w2, key & 0x7FFF);
 
 			switch ((key & 0x7FFF) - 0x1E) {
@@ -622,29 +623,48 @@ static void GUI_Widget_GameControls_Click(Widget *w)
 					break;
 
 				case 3:
-					g_gameConfig.hints ^= 0x1;
+					if (++g_gameConfig.cursorSpeed >= 5) g_gameConfig.cursorSpeed = 0;
 					break;
 
 				case 4:
-					g_gameConfig.autoScroll ^= 0x1;
+					g_gameConfig.hints ^= 0x1;
 					break;
 
 				case 5:
+					g_gameConfig.autoScroll ^= 0x1;
+					break;
+
+				case 6:
+					g_config.language = (g_config.language == LANGUAGE_LITHUANIAN) ? LANGUAGE_ENGLISH : LANGUAGE_LITHUANIAN;
+					Config_Write("dune.cfg", &g_config);
+					String_Uninit();
+					String_Init();
+					refreshAll = true;
+					break;
+
+				case 7:
 					loop = false;
 					break;
 
 				default: break;
 			}
 
-			GUI_Widget_MakeNormal(w, false);
-
-			GUI_Widget_Draw(w);
+			if (refreshAll) {
+				GUI_Window_RestoreScreen(desc);
+				GUI_Window_BackupScreen(desc);
+				GUI_Window_Create(desc);
+			} else if (w != NULL) {
+				GUI_Widget_MakeNormal(w, false);
+				GUI_Widget_Draw(w);
+			}
 		}
 
 		GUI_PaletteAnimate();
 	}
 
 	GUI_Window_RestoreScreen(desc);
+	GameOptions_Save();
+	g_widgetLinkedListTail = NULL;
 #ifdef __3DS__
 	GUI_3DS_SetWindow(NULL);
 #endif
@@ -862,7 +882,7 @@ static void FillSavegameDesc(bool save)
 	for (i = 0; i < 5; i++) {
 		char *desc = g_savegameDesc[i];
 		char *filename = GenerateSavegameFilename(i);
-		char rawName[51];
+		char rawName[51] = {0};
 		uint8 fileId;
 		uint8 houseID = HOUSE_ATREIDES;
 		uint16 mission = 1;
@@ -871,11 +891,13 @@ static void FillSavegameDesc(bool save)
 		*desc = '\0';
 		rawName[0] = '\0';
 
+		SaveGame_RecoverFile(filename);
 		if (File_Exists_Personal(filename)) {
 			fileId = ChunkFile_Open_Personal(filename);
 			if (fileId != FILE_INVALID) {
 				uint8 infoBuf[260];
-				uint8 plyrBuf[62 * 6];
+				/* PLYR stores one 66-byte house record with 16-bit index and flags. */
+				uint8 plyrBuf[66 * HOUSE_MAX];
 				uint32 infoLen;
 				uint32 plyrLen;
 
@@ -886,22 +908,17 @@ static void FillSavegameDesc(bool save)
 
 				memset(infoBuf, 0, sizeof(infoBuf));
 				infoLen = ChunkFile_Read(fileId, HTOBE32(CC_INFO), infoBuf, sizeof(infoBuf));
-				if (infoLen >= 250) {
-					uint16 version = (uint16)(infoBuf[0] | (infoBuf[1] << 8));
-					uint16 campID = 0;
-					if (version == 0x0290) {
-						campID = (uint16)(infoBuf[248] | (infoBuf[249] << 8));
-					} else if (infoLen >= 256) {
-						campID = (uint16)(infoBuf[254] | (infoBuf[255] << 8));
-					}
-					mission = clamp(campID + 1, 1, 9);
+				/* Both supported INFO layouts store campaign after the scenario at byte 252. */
+				if (infoLen >= 256) {
+					uint16 campaign = (uint16)(infoBuf[254] | (infoBuf[255] << 8));
+					mission = clamp(campaign + 1, 1, 9);
 				}
 
 				memset(plyrBuf, 0, sizeof(plyrBuf));
 				plyrLen = ChunkFile_Read(fileId, HTOBE32(CC_PLYR), plyrBuf, sizeof(plyrBuf));
-				for (uint32 off = 0; off + 62 <= plyrLen; off += 62) {
-					uint8 hIdx = plyrBuf[off];
-					uint16 hFlags = (uint16)(plyrBuf[off + 3] | (plyrBuf[off + 4] << 8));
+				for (uint32 off = 0; off + 66 <= plyrLen; off += 66) {
+					uint16 hIdx = (uint16)(plyrBuf[off] | (plyrBuf[off + 1] << 8));
+					uint16 hFlags = (uint16)(plyrBuf[off + 4] | (plyrBuf[off + 5] << 8));
 					if ((hFlags & 2) != 0 && hIdx < HOUSE_MAX) {
 						houseID = hIdx;
 						break;
@@ -915,7 +932,7 @@ static void FillSavegameDesc(bool save)
 		if (used) {
 			snprintf(desc, 51, "%u. %.44s", (unsigned)(i + 1), rawName);
 		} else {
-			snprintf(desc, 51, "%u. %s", (unsigned)(i + 1), isLT ? "Tuscia" : "Empty");
+			snprintf(desc, 51, "%u. %s", (unsigned)(i + 1), isLT ? "Tuščia" : "Empty");
 		}
 		GUI_3DS_SetSaveSlotInfo(i, used, houseID, mission, rawName);
 	}
@@ -969,6 +986,11 @@ static bool GUI_Widget_Savegame_Click(uint16 index)
 		snprintf(description, sizeof(description), "2026-11-07 12:00");
 	}
 	bool saved = SaveGame_SaveFile(GenerateSavegameFilename(index), description);
+	if (saved) {
+		GUI_3DS_ShowTopToast(GUI_3DS_IsLithuanian() ? "Žaidimas išsaugotas" : "Game Saved", 120);
+	} else {
+		GUI_DisplayModalMessage(GUI_3DS_IsLithuanian() ? "Nepavyko išsaugoti žaidimo." : "Could not save the game.", 0xFFFF);
+	}
 	FillSavegameDesc(true);
 	return saved;
 #else
@@ -1046,7 +1068,7 @@ static void UpdateArrows(bool save, bool force)
 
 	previousIndex = s_savegameIndexBase;
 
-	w = &g_table_windowWidgets[8];
+	w = &g_table_windowWidgets[9];
 	if (s_savegameIndexBase >= 5) {
 		GUI_Widget_MakeVisible(w);
 	} else {
@@ -1054,7 +1076,7 @@ static void UpdateArrows(bool save, bool force)
 		GUI_Widget_Undraw(w, 233);
 	}
 
-	w = &g_table_windowWidgets[7];
+	w = &g_table_windowWidgets[8];
 	if (s_savegameCountOnDisk - (save ? 0 : 1) > s_savegameIndexBase) {
 		GUI_Widget_MakeVisible(w);
 	} else {
@@ -1109,7 +1131,7 @@ bool GUI_Widget_SaveLoad_Click(bool save)
 			w2 = GUI_Widget_Get_ByIndex(w, key);
 
 			switch (key) {
-				case 0x25:
+				case 0x26:
 					s_savegameIndexBase = min(s_savegameCountOnDisk - (save ? 0 : 1), s_savegameIndexBase + 1);
 
 					FillSavegameDesc(save);
@@ -1117,7 +1139,7 @@ bool GUI_Widget_SaveLoad_Click(bool save)
 					GUI_Widget_DrawAll(w);
 					break;
 
-				case 0x26:
+				case 0x27:
 					s_savegameIndexBase = max(0, s_savegameIndexBase - 1);
 
 					FillSavegameDesc(save);
@@ -1141,7 +1163,9 @@ bool GUI_Widget_SaveLoad_Click(bool save)
 						GUI_Window_RestoreScreen(desc);
 						GUI_3DS_SetWindow(NULL);
 						g_widgetLinkedListTail = NULL;
-						return SaveGame_LoadFile(GenerateSavegameFilename(key));
+						bool loaded = SaveGame_LoadFile(GenerateSavegameFilename(key));
+						if (!loaded) GUI_DisplayModalMessage(GUI_3DS_IsLithuanian() ? "Nepavyko įkelti žaidimo." : "Could not load the saved game.", 0xFFFF);
+						return loaded;
 					}
 
 					GUI_Window_RestoreScreen(desc);

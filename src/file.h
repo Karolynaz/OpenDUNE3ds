@@ -68,6 +68,9 @@ extern uint32 ChunkFile_Read(uint8 index, uint32 header, void *buffer, uint32 bu
 #define ChunkFile_Open(FILENAME)            ChunkFile_Open_Ex(SEARCHDIR_GLOBAL_DATA_DIR,   FILENAME)
 #define ChunkFile_Open_Personal(FILENAME)   ChunkFile_Open_Ex(SEARCHDIR_PERSONAL_DATA_DIR, FILENAME)
 
+#ifdef __3DS__
+extern void File_GetPersonalPath(char *path, size_t size, const char *filename);
+#endif
 extern FILE *fopendatadir(enum SearchDirectory dir, const char *name, const char *mode);
 extern bool fread_le_uint32(uint32 *value, FILE *stream);
 extern bool fread_le_uint16(uint16 *value, FILE *stream);

@@ -15,6 +15,7 @@
 #include "config.h"
 #include "file.h"
 #include "table/strings.h"
+#include "table/strings_lt.h"
 
 /* 941 strings and 38356 chars in English,
    833 and 39582 in French,
@@ -25,7 +26,7 @@ static uint16 * s_strings = NULL;
 static char * s_stringsBuffer = NULL;
 static uint16 s_stringsCount = 0;
 
-const char * const g_languageSuffixes[LANGUAGE_MAX] = { "ENG", "FRE", "GER", "ITA", "SPA" };
+const char * const g_languageSuffixes[LANGUAGE_MAX] = { "ENG", "FRE", "GER", "ITA", "SPA", "ENG" };
 
 /**
  * Decompress a string and
@@ -104,6 +105,11 @@ const char *String_GenerateFilename(const char *name)
  */
 char *String_Get_ByIndex(uint16 stringID)
 {
+#ifdef __3DS__
+	if (stringID == STR_GAME_CONTROLS && g_config.language != LANGUAGE_LITHUANIAN) {
+		return "Settings";
+	}
+#endif
 	if (s_stringsBuffer == NULL || s_strings == NULL) return "";
 	return s_stringsBuffer + s_strings[stringID];
 }
@@ -174,12 +180,16 @@ void String_Init(void)
 	s_strings = malloc(sizeof(uint16) * MAX_STRING_COUNT);
 	s_strings[s_stringsCount] = 0;	/* points to available space in buffer */
 	s_stringsBuffer = malloc(MAX_CHARACTER_COUNT);
-	String_Load("DUNE",     false,   1, 339);
-	String_Load("MESSAGE",  false, 340, 367);
-	String_Load("INTRO",    false, 368, 404);
-	String_Load("TEXTH",    true,  405, 444);
-	String_Load("TEXTA",    true,  445, 484);
-	String_Load("TEXTO",    true,  485, 524);
+	if (g_config.language == LANGUAGE_LITHUANIAN) {
+		String_LoadLithuanian(s_strings, s_stringsBuffer, MAX_CHARACTER_COUNT, &s_stringsCount);
+	} else {
+		String_Load("DUNE",     false,   1, 339);
+		String_Load("MESSAGE",  false, 340, 367);
+		String_Load("INTRO",    false, 368, 404);
+		String_Load("TEXTH",    true,  405, 444);
+		String_Load("TEXTA",    true,  445, 484);
+		String_Load("TEXTO",    true,  485, 524);
+	}
 	String_Load("PROTECT",  true,  525,   0);
 }
 

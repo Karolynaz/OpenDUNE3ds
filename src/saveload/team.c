@@ -38,6 +38,9 @@ static const SaveLoadDesc s_saveTeam[] = {
  */
 bool Team_Load(FILE *fp, uint32 length)
 {
+	const uint32 recordSize = SaveLoad_GetLength(s_saveTeam);
+	if (length % recordSize != 0) return false;
+
 	while (length > 0) {
 		Team *t;
 		Team tl;
@@ -47,8 +50,9 @@ bool Team_Load(FILE *fp, uint32 length)
 		/* Read the next Structure from disk */
 		if (!SaveLoad_Load(s_saveTeam, fp, &tl)) return false;
 
-		length -= SaveLoad_GetLength(s_saveTeam);
+		length -= recordSize;
 
+		if (tl.index >= TEAM_INDEX_MAX || tl.houseID >= HOUSE_MAX) return false;
 		tl.script.scriptInfo = g_scriptTeam;
 		tl.script.script = g_scriptTeam->start + (size_t)tl.script.script;
 

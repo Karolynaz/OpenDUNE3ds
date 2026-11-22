@@ -26,6 +26,7 @@
 #include "../wsa.h"
 
 
+#ifndef __3DS__
 static void GUI_Security_DrawText(char *text)
 {
 	Screen oldScreenID;
@@ -73,6 +74,8 @@ static void GUI_Security_NormaliseText(char *str)
 	*str = '\0';
 }
 
+#endif
+
 /**
  * Ask the security question to the user. Give him 3 times. If he fails,
  *  return false, otherwise true.
@@ -81,6 +84,10 @@ static void GUI_Security_NormaliseText(char *str)
  */
 bool GUI_Security_Show(void)
 {
+#ifdef __3DS__
+	/* The 3DS port skips the manual questions. */
+	return true;
+#else
 	const char *wsaHouseFilename;
 	uint16 questionsCount;
 	uint16 oldCurrentWidget;
@@ -212,4 +219,5 @@ bool GUI_Security_Show(void)
 	g_interrogation = false;
 
 	return valid;
+#endif
 }

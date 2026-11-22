@@ -1,4 +1,4 @@
-# Nintendo 3DS Makefile for OpenDUNE
+# Nintendo 3DS Makefile for dune3ds
 
 DEVKITPRO ?= /Users/karolynaz/devkitpro
 DEVKITARM ?= $(DEVKITPRO)/devkitARM
@@ -11,17 +11,17 @@ SMDHTOOL  := $(DEVKITPRO)/tools/bin/smdhtool
 BANNERTOOL:= $(DEVKITPRO)/tools/bin/bannertool
 MAKEROM   := $(DEVKITPRO)/tools/bin/makerom
 
-TARGET    := OpenDUNE3DS
+TARGET    := dune3ds
 .DEFAULT_GOAL := all
 BUILD_DIR := build
 
-ARCH      := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
-CFLAGS    := $(ARCH) -specs=3dsx.specs -std=gnu11 -O2 -fno-strict-aliasing -Wall -MMD -MP \
+ARCH      := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp -mtp=soft
+CFLAGS    := $(ARCH) -specs=3dsx.specs -std=gnu11 -O3 -ffast-math -fomit-frame-pointer -fno-strict-aliasing -Wall -MMD -MP \
              -D__3DS__ -DARM11 \
              -iquote include -iquote src \
              -I$(CTRULIB)/include
 
-LDFLAGS   := $(ARCH) -specs=3dsx.specs -O2 \
+LDFLAGS   := $(ARCH) -specs=3dsx.specs -O3 \
              -L$(CTRULIB)/lib -lctru -lm
 
 SRCS := \
@@ -98,6 +98,7 @@ SRCS := \
 	src/table/movementtype.c \
 	src/table/selectiontype.c \
 	src/table/sound.c \
+	src/table/strings_lt.c \
 	src/table/structureinfo.c \
 	src/table/teamaction.c \
 	src/table/tilediff.c \
@@ -119,7 +120,8 @@ OBJS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRCS))
 
 -include $(OBJS:.o=.d)
 
-ROMFS_FLAG := $(if $(wildcard romfs/*),--romfs=romfs,)
+ROMFS_FILES := $(wildcard romfs/*)
+ROMFS_FLAG := $(if $(ROMFS_FILES),--romfs=romfs,)
 
 all: $(TARGET).3dsx $(TARGET).cia
 	@./scripts/package_build.sh
@@ -133,31 +135,28 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJS)
 	@echo "LINK $@"
 	@$(CC) $(OBJS) $(LDFLAGS) -o $@
 
-$(TARGET).smdh: os/png_icon/dune2_32x32.png
+$(TARGET).smdh: os/banner/icon_48x48.png
 	@mkdir -p $(BUILD_DIR)
-	@sips -z 48 48 os/png_icon/dune2_32x32.png --out $(BUILD_DIR)/icon_48.png > /dev/null
-	@$(SMDHTOOL) --create "Dune II" "Dune II Nintendo 3DS Port" "Karolynaz / OpenDUNE" $(BUILD_DIR)/icon_48.png $@
+	@$(SMDHTOOL) --create "Dune II" "Dune II Nintendo 3DS Port" "Karolynaz / dune3ds" $< $@
 
-$(TARGET).3dsx: $(BUILD_DIR)/$(TARGET).elf $(TARGET).smdh
+$(TARGET).3dsx: $(BUILD_DIR)/$(TARGET).elf $(TARGET).smdh $(ROMFS_FILES)
 	@echo "3DSXTOOL $@"
 	@$(3DSXTOOL) $(BUILD_DIR)/$(TARGET).elf $@ --smdh=$(TARGET).smdh $(ROMFS_FLAG)
 
-$(BUILD_DIR)/banner.bin: os/png_icon/dune2_32x32.png
-	@mkdir -p $(BUILD_DIR)
-	@sips -z 128 256 os/png_icon/dune2_32x32.png --out $(BUILD_DIR)/banner_256x128.png > /dev/null
-	@python3 -c "import wave, struct; w = wave.open('$(BUILD_DIR)/silent.wav', 'w'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050); w.writeframes(struct.pack('<h', 0) * 2205); w.close()"
-	@$(BANNERTOOL) makebanner -i $(BUILD_DIR)/banner_256x128.png -a $(BUILD_DIR)/silent.wav -o $@
+$(BUILD_DIR)/banner.bin: os/banner/banner_256x128.png os/banner/banner_sound.wav
+	@mkdir -p $(dir $@)
+	@$(BANNERTOOL) makebanner -i os/banner/banner_256x128.png -a os/banner/banner_sound.wav -o $@
+	@cp -f $@ banner.bin
 
-$(BUILD_DIR)/icon.bin: os/png_icon/dune2_32x32.png
+$(BUILD_DIR)/icon.bin: os/banner/icon_48x48.png
 	@mkdir -p $(BUILD_DIR)
-	@sips -z 48 48 os/png_icon/dune2_32x32.png --out $(BUILD_DIR)/icon_48.png > /dev/null
-	@$(BANNERTOOL) makesmdh -s "Dune II" -l "Dune II 3DS" -p "Karolynaz" -i $(BUILD_DIR)/icon_48.png -o $@
+	@$(BANNERTOOL) makesmdh -s "Dune II" -l "Dune II 3DS" -p "Karolynaz" -i $< -o $@
 
-$(TARGET).cia: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/banner.bin $(BUILD_DIR)/icon.bin template.rsf
+$(TARGET).cia: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/banner.bin $(BUILD_DIR)/icon.bin $(ROMFS_FILES) template.rsf
 	@echo "MAKEROM $@"
 	@$(MAKEROM) -f cia -o $@ -elf $(BUILD_DIR)/$(TARGET).elf -rsf template.rsf -icon $(BUILD_DIR)/icon.bin -banner $(BUILD_DIR)/banner.bin
 
 clean:
-	@rm -rf $(BUILD_DIR) $(TARGET).3dsx $(TARGET).smdh $(TARGET).cia
+	@rm -rf $(BUILD_DIR) $(TARGET).3dsx $(TARGET).smdh $(TARGET).cia OpenDUNE3DS.3dsx OpenDUNE3DS.smdh OpenDUNE3DS.cia
 
 .PHONY: all clean

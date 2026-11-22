@@ -30,7 +30,9 @@
 #include "../scenario.h"
 #include "../sprites.h"
 #include "../string.h"
+#include "../config.h"
 #include "../table/strings.h"
+#include "../table/strings_lt.h"
 #include "../timer.h"
 #include "../tools.h"
 #include "../wsa.h"
@@ -137,7 +139,8 @@ int GUI_Mentat_3DS_GetRows(const char *text[11], bool header[11])
 			header[i] = true;
 			continue;
 		}
-		text[i] = (const char *)h + 7;
+		const char *title = (const char *)h + 7;
+		text[i] = (g_config.language == LANGUAGE_LITHUANIAN) ? Strings_LT_TranslateMentatTopic(title) : title;
 		header[i] = (h[6] == '0');
 		h = String_NextString(h);
 	}
@@ -326,9 +329,13 @@ static void GUI_Mentat_Draw(bool force)
 
 	line = GUI_Widget_Get_ByIndex(w, 3);
 	for (i = 0; i < 11; i++) {
-		line->drawParameterDown.text     = (char *)helpSubjects + 7;
-		line->drawParameterSelected.text = (char *)helpSubjects + 7;
-		line->drawParameterNormal.text   = (char *)helpSubjects + 7;
+		char *title = (char *)helpSubjects + 7;
+		if (g_config.language == LANGUAGE_LITHUANIAN) {
+			title = (char *)Strings_LT_TranslateMentatTopic(title);
+		}
+		line->drawParameterDown.text     = title;
+		line->drawParameterSelected.text = title;
+		line->drawParameterNormal.text   = title;
 
 		if (helpSubjects[6] == '0') {
 			line->offsetX          = 16;
@@ -445,6 +452,11 @@ bool GUI_Widget_Mentat_Click(Widget *w)
 
 	Sprites_UnloadTiles();
 
+#ifdef __3DS__
+	uint16 oldSelectionType = g_selectionType;
+	g_selectionType = SELECTIONTYPE_MENTAT;
+#endif
+
 	Timer_SetTimer(TIMER_GAME, false);
 
 	GUI_Mentat_ShowHelpList(false);
@@ -454,6 +466,9 @@ bool GUI_Widget_Mentat_Click(Widget *w)
 	Driver_Sound_Play(1, 0xFF);
 
 	Sprites_LoadTiles();
+#ifdef __3DS__
+	GUI_ChangeSelectionType(oldSelectionType);
+#endif
 
 	g_textDisplayNeedsUpdate = true;
 
@@ -1056,6 +1071,20 @@ static void GUI_Mentat_ShowHelp(void)
 
 		while (*text != '\0' && *text != 0xC) text++;
 		if (*text != '\0') *text++ = '\0';
+
+		if (g_config.language == LANGUAGE_LITHUANIAN) {
+			const char *lt = Strings_LT_LookupMentatDesc(picture);
+			if (lt != NULL) {
+				size_t used = (size_t)(desc - (char *)g_readBuffer);
+				if (used < g_readBufferSize) {
+					strncpy(desc, lt, g_readBufferSize - used - 1);
+					((char *)g_readBuffer)[g_readBufferSize - 1] = '\0';
+					text = desc;
+					while (*text != '\0' && *text != 0xC) text++;
+					if (*text != '\0') *text++ = '\0';
+				}
+			}
+		}
 	}
 
 	GUI_Mentat_Loop(picture, desc, text, loopAnimation, g_widgetMentatFirst);
@@ -1071,7 +1100,6 @@ static void GUI_Mentat_ShowHelp(void)
 #ifdef __3DS__
 	/* Drop the stale button list so the help list gets normal menu input again. */
 	GUI_3DS_SetMentatButtons(NULL);
-	g_3dsMentatExit = false;
 	g_3dsMentatHelpActive = true;
 #endif
 }
@@ -1174,7 +1202,9 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 	uint16 step;
 
 #ifdef __3DS__
+	bool isHelpDetail = (w != NULL && w->next == NULL && w->drawParameterNormal.spriteID == 377);
 	GUI_3DS_SetMentatButtons(w);
+	GUI_3DS_SetMentatHasMore(false);
 #endif
 	dirty = false;
 	textTick = 0;
@@ -1194,6 +1224,11 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 		Widget_PaintCurrentWidget();
 		step = 1;
 	}
+#ifdef __3DS__
+	else if (isHelpDetail) {
+		step = 1;
+	}
+#endif
 
 	GUI_DrawText_Wrapper(NULL, 0, 0, 0, 0, 0x31);
 
@@ -1207,11 +1242,18 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 	lines = 0;
 	frame = 0;
 	g_timerTimeout = 0;
+#ifdef __3DS__
+	descTick = isHelpDetail ? g_timerGUI : (g_timerGUI + 30);
+#else
 	descTick = g_timerGUI + 30;
+#endif
 
 	Input_History_Clear();
 
-	textDone = false;
+	textDone = (textLines == 0);
+#ifdef __3DS__
+	if (isHelpDetail) GUI_3DS_SetMentatHasMore(textLines > 1);
+#endif
 	result = 0;
 	for (done = false; !done; sleepIdle()) {
 		uint16 key;
@@ -1221,6 +1263,33 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 		key = GUI_Widget_HandleEvents(w);
 #ifdef __3DS__
 		if (w != NULL) key = GUI_3DS_MentatEvent(key);
+		if (isHelpDetail) {
+			/* B or Escape leaves Mentat detail immediately from any animation/text step. */
+			if (key == 0x8002 || (key & 0xFF) == 0x01 || (key & 0xFF) == 0x1B) {
+				GUI_3DS_SetSubtitle(NULL);
+				GUI_3DS_SetMentatHasMore(false);
+				result = 0x8002;
+				done = true;
+				break;
+			}
+			/* A / Space / Enter advances to the next description chunk while more remain. */
+			if (key == 0x8001 || ((key & 0x800) == 0 && ((key & 0xFF) == 0x2B || (key & 0xFF) == 0x3D || (key & 0xFF) == 0x1C))) {
+				if (step < 2) {
+					lines = descLines;
+					dirty = true;
+					step = (text != NULL) ? 2 : 4;
+					key = 0;
+				} else if (!textDone) {
+					key = 1;
+				} else {
+					GUI_3DS_SetSubtitle(NULL);
+					GUI_3DS_SetMentatHasMore(false);
+					result = 0x8001;
+					done = true;
+					break;
+				}
+			}
+		}
 #endif
 
 		GUI_PaletteAnimate();
@@ -1253,7 +1322,11 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 					dirty = true;
 				} else {
 					if (g_timerGUI > descTick) {
+#ifdef __3DS__
+						descTick = g_timerGUI + (isHelpDetail ? 6 : 15);
+#else
 						descTick = g_timerGUI + 15;
+#endif
 						lines++;
 						dirty = true;
 					}
@@ -1275,7 +1348,17 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 				/* FALL-THROUGH */
 
 			case 3:
-				if (mentatSpeakingMode == 2 && textTick < g_timerGUI) key = 1;
+				if (mentatSpeakingMode == 2 && textTick < g_timerGUI) {
+#ifdef __3DS__
+					if (isHelpDetail && textDone) {
+						mentatSpeakingMode = 0;
+					} else {
+						key = 1;
+					}
+#else
+					key = 1;
+#endif
+				}
 
 				if ((key != 0 && textDone) || result != 0) {
 					GUI_Mouse_Hide_InRegion(0, 0, SCREEN_WIDTH, 40);
@@ -1283,6 +1366,7 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 					GUI_Mouse_Show_InRegion();
 #ifdef __3DS__
 					GUI_3DS_SetSubtitle(NULL);
+					GUI_3DS_SetMentatHasMore(false);
 #endif
 
 					step = 4;
@@ -1300,7 +1384,17 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 						GUI_3DS_SetSubtitle(text);
 #endif
 						mentatSpeakingMode = 1;
+#ifdef __3DS__
+						if (isHelpDetail) {
+							textDelay = (uint32)strlen(text) * 2;
+							if (textDelay < 150) textDelay = 150;
+							if (textDelay > 360) textDelay = 360;
+						} else {
+							textDelay = (uint32)strlen(text) * 4;
+						}
+#else
 						textDelay = (uint32)strlen(text) * 4;
+#endif
 						textTick = g_timerGUI + textDelay;
 
 						if (textLines != 0) {
@@ -1308,6 +1402,9 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 						} else {
 							textDone = true;
 						}
+#ifdef __3DS__
+						if (isHelpDetail) GUI_3DS_SetMentatHasMore(!textDone);
+#endif
 
 						GFX_Screen_SetActive(SCREEN_0);
 					}
@@ -1323,7 +1420,11 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 				if (mentatSpeakingMode == 0 || textTick > g_timerGUI) break;
 
 				mentatSpeakingMode = 2;
+#ifdef __3DS__
+				textTick += isHelpDetail ? (textDelay / 2) : (textDelay + textDelay / 2);
+#else
 				textTick += textDelay + textDelay / 2;
+#endif
 				break;
 
 			case 4:
@@ -1385,6 +1486,7 @@ uint16 GUI_Mentat_Loop(const char *wsaFilename, char *pictureDetails, char *text
 
 #ifdef __3DS__
 	GUI_3DS_SetSubtitle(NULL);
+	GUI_3DS_SetMentatHasMore(false);
 	GUI_3DS_SetMentatButtons(NULL);
 #endif
 	return result;
@@ -1399,18 +1501,28 @@ uint16 GUI_Mentat_SplitText(char *str, uint16 maxWidth)
 
 	while (*str != '\0') {
 		uint16 width = 0;
+		char *lastSpace = NULL;
 
 		while (width < maxWidth && *str != '.' && *str != '!' && *str != '?' && *str != '\0' && *str != '\r') {
-			width += Font_GetCharWidth(*str++);
+			const char *p = str;
+			unsigned char base = Font_NextChar(&p, NULL);
+			if (base == ' ') lastSpace = str;
+			width += Font_GetCharWidth(base);
+			str = (char *)p;
 		}
 
-		if (width >= maxWidth) {
-			while (*str != ' ') width -= Font_GetCharWidth(*str--);
+		if (width >= maxWidth && lastSpace != NULL) {
+			str = lastSpace;
 		}
 
 		height++;
 
+#ifdef __3DS__
+		/* Bottom screen fits full sentences cleanly instead of breaking mid-sentence at 3 lines. */
+		if ((*str != '\0' && (*str == '.' || *str == '!' || *str == '?' || *str == '\r')) || height >= 6) {
+#else
 		if ((*str != '\0' && (*str == '.' || *str == '!' || *str == '?' || *str == '\r')) || height >= 3) {
+#endif
 			while (*str != '\0' && (*str == ' ' || *str == '.' || *str == '!' || *str == '?' || *str == '\r')) str++;
 
 			if (*str != '\0') str[-1] = '\0';

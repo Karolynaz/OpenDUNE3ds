@@ -33,6 +33,9 @@ static const SaveLoadDesc s_saveStructure[] = {
  */
 bool Structure_Load(FILE *fp, uint32 length)
 {
+	const uint32 recordSize = SaveLoad_GetLength(s_saveStructure);
+	if (length % recordSize != 0) return false;
+
 	while (length > 0) {
 		Structure *s;
 		Structure sl;
@@ -42,8 +45,10 @@ bool Structure_Load(FILE *fp, uint32 length)
 		/* Read the next Structure from disk */
 		if (!SaveLoad_Load(s_saveStructure, fp, &sl)) return false;
 
-		length -= SaveLoad_GetLength(s_saveStructure);
+		length -= recordSize;
 
+		if (sl.o.index >= STRUCTURE_INDEX_MAX_HARD || sl.o.type >= STRUCTURE_MAX ||
+				sl.o.houseID >= HOUSE_MAX || sl.creatorHouseID >= HOUSE_MAX) return false;
 		sl.o.script.scriptInfo = g_scriptStructure;
 		sl.o.script.script = g_scriptStructure->start + (size_t)sl.o.script.script;
 		if (sl.upgradeTimeLeft == 0) sl.upgradeTimeLeft = Structure_IsUpgradable(&sl) ? 100 : 0;

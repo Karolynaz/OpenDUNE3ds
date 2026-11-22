@@ -25,12 +25,22 @@ AccessControlInfo:
   ReleaseKernelMajor            : "02"
   ReleaseKernelMinor            : "33"
   IdealProcessor                : 0
-  AffinityMask                  : 1
+  AffinityMask                  : 3
   Priority                      : 16
-  MaxCpu                        : 0x00000000
+  MaxCpu                        : 0x50
 
   MemoryType                    : Application
   SystemMode                    : 64MB
+  SystemModeExt                 : 124MB
+  CpuSpeed                      : 804MHz
+  EnableL2Cache                 : true
+  CanAccessCore2                : true
+
+  MemoryMapping:
+    - 1f000000-1f5fffff:r
+  IORegisterMapping:
+    - 1ff50000-1ff57fff
+    - 1ff70000-1ff77fff
 
   FileSystemAccess:
     - DirectSdmc
@@ -60,8 +70,15 @@ AccessControlInfo:
     CreateEvent: 23
     SignalEvent: 24
     ClearEvent: 25
+    CreateTimer: 26
+    SetTimer: 27
     CancelTimer: 28
     ClearTimer: 29
+    CreateMemoryBlock: 30
+    MapMemoryBlock: 31
+    UnmapMemoryBlock: 32
+    CreateAddressArbiter: 33
+    ArbitrateAddress: 34
     CloseHandle: 35
     WaitSynchronization1: 36
     WaitSynchronizationN: 37
@@ -80,42 +97,25 @@ AccessControlInfo:
     SendSyncRequest: 50
     OpenProcess: 51
     OpenThread: 52
+    GetProcessId: 53
+    GetProcessIdOfThread: 54
+    GetThreadId: 55
+    GetResourceLimit: 56
+    GetResourceLimitLimitValues: 57
+    GetResourceLimitCurrentValues: 58
+    Break: 60
     OutputDebugString: 61
-    CreatePort: 71
-    CreateSessionToPort: 72
-    CreateSession: 73
-    AcceptSession: 74
-    ReplyAndReceive1: 75
-    ReplyAndReceive2: 76
-    ReplyAndReceive3: 77
-    ReplyAndReceive4: 78
-    ReplyAndReceive: 79
-    BindInterrupt: 80
-    UnbindInterrupt: 81
-    InvalidateProcessDataCache: 82
-    StoreProcessDataCache: 83
-    FlushProcessDataCache: 84
-    StartInterProcessDma: 85
-    StopDma: 86
-    GetDmaState: 87
-    RestartDma: 88
-    SetTimer: 90
-    ControlSystemMemory: 110
-    ControlProcessMemory: 112
-    MapProcessMemory: 113
-    UnmapProcessMemory: 114
-    CreateAddressArbiter: 115
-    ArbitrateAddress: 116
-    SetGpuProt: 117
-    SetWifiEnabled: 118
 
   ServiceAccessControl:
     - APT:U
+    - cfg:u
+    - dsp::DSP
     - fs:USER
     - gsp::Gpu
     - hid:USER
-    - ndsp:u
-    - dsp::DSP
+    - ir:rst
+    - ptm:u
+    - ptm:sysm
     - soc:U
     - cdc:u
     - mic:u
@@ -125,3 +125,6 @@ SystemControlInfo:
   SaveDataSize: 1MB
   RemasterVersion: 0
   StackSize: 0x00040000
+
+RomFs:
+  RootPath: romfs

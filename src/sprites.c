@@ -51,6 +51,11 @@ static uint16 s_mouseSpriteBufferSize = 0;
 
 static bool s_iconLoaded = false;
 
+uint8 *Sprite_GetByIndex(uint16 index)
+{
+	return g_sprites != NULL && index < s_spritesCount ? g_sprites[index] : NULL;
+}
+
 /**
  * Loads the sprites.
  *

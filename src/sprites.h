@@ -72,6 +72,7 @@ extern uint16 g_wallTileID;       /*!< First wall. */
 
 extern void Sprites_Init(void);
 extern void Sprites_Uninit(void);
+extern uint8 *Sprite_GetByIndex(uint16 index);
 extern uint8 Sprite_GetWidth(uint8 *sprite);
 extern uint8 Sprite_GetHeight(uint8 *sprite);
 extern void Sprites_LoadTiles(void);

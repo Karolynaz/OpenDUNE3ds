@@ -10,6 +10,8 @@
 #include "shop_3ds.h"
 #include "shop_art_3ds.h"
 #include "font_tiny5.h"
+#include "cairo_text.h"
+#include "popup_3ds.h"
 #include "gui.h"
 #include "widget.h"
 #include "../audio/sound.h"
@@ -50,36 +52,62 @@ bool g_3dsModalMessageActive = false;
 static int s_dialogFocus = 0;
 static bool s_resultsActive;
 static Widget *s_resultsButtons;
+static bool s_resultsContinueMission;
 static Widget *s_mentatButtons = NULL;
 static WindowDesc *s_dialogWindow = NULL;
 static Widget *s_dialogChosen = NULL;
 static uint8 s_messageTop[TOP_WIDTH*TOP_HEIGHT], s_messageTopMask[TOP_WIDTH*TOP_HEIGHT];
 static uint8 s_messageBottom[BOTTOM_WIDTH*BOTTOM_HEIGHT], s_messageBottomMask[BOTTOM_WIDTH*BOTTOM_HEIGHT];
 static char s_messageText[768];
-void GUI_3DS_BeginMessage(const char *text)
+static uint16 s_messageSpriteID = 0xFFFF;
+static uint32 s_messageStartTick;
+void GUI_3DS_BeginMessageEx(const char *text, uint16 spriteID)
 {
  if(g_topScreenBuffer) memcpy(s_messageTop,g_topScreenBuffer,sizeof(s_messageTop));
  if(g_bottomScreenBuffer) memcpy(s_messageBottom,g_bottomScreenBuffer,sizeof(s_messageBottom));
  memcpy(s_messageTopMask,g_topScreenUIMask,sizeof(s_messageTopMask));
  memcpy(s_messageBottomMask,g_bottomScreenUIMask,sizeof(s_messageBottomMask));
  snprintf(s_messageText,sizeof(s_messageText),"%s",text ? text : "");
+ s_messageSpriteID = spriteID;
+ s_messageStartTick = g_timerGUI;
  g_3dsModalMessageActive=true;
 }
+void GUI_3DS_BeginMessage(const char *text) { GUI_3DS_BeginMessageEx(text, 0xFFFF); }
 void GUI_3DS_EndMessage(void) { g_3dsModalMessageActive=false; }
 bool GUI_3DS_SetResultsActive(bool active) { bool old=s_resultsActive; s_resultsActive=active; return old; }
-void GUI_3DS_SetResultsButtons(Widget *buttons) { s_resultsButtons=buttons; s_dialogFocus=0; }
+void GUI_3DS_SetResultsButtons(Widget *buttons, bool continueMission)
+{
+	s_resultsButtons = buttons;
+	s_resultsContinueMission = continueMission;
+	s_dialogFocus = 0;
+}
 static bool s_titleActive = false;
 static bool s_launchActive = false;
 static bool s_planetBgValid = false;
 static uint8 s_planetBg[320 * 200];
 static uint16 s_houseChoice;
 static uint16 s_mentatChoice = 0;
+static bool s_mentatTextHasMore = false;
 static uint8 s_houseConfirmID = 0xFF;
 static int s_houseFocus = 0;
 static char s_subtitleText[512] = "";
+static char s_toastText[64] = "";
+static uint32 s_toastUntilTick = 0;
 
-static bool GUI_3DS_IsLithuanian(void)
+void GUI_3DS_ShowTopToast(const char *text, uint32 durationTicks)
 {
+	if (text == NULL || text[0] == '\0' || durationTicks == 0) {
+		s_toastText[0] = '\0';
+		s_toastUntilTick = 0;
+		return;
+	}
+	snprintf(s_toastText, sizeof(s_toastText), "%s", text);
+	s_toastUntilTick = g_timerGUI + durationTicks;
+}
+
+bool GUI_3DS_IsLithuanian(void)
+{
+	if (g_config.language == LANGUAGE_LITHUANIAN) return true;
 	const char *yes = String_Get_ByIndex(STR_YES);
 	return (yes != NULL && (yes[0] == 'T' || yes[0] == 't'));
 }
@@ -122,6 +150,11 @@ void GUI_3DS_SetSubtitle(const char *text)
 		return;
 	}
 	snprintf(s_subtitleText, sizeof(s_subtitleText), "%s", text);
+}
+
+void GUI_3DS_SetMentatHasMore(bool hasMore)
+{
+	s_mentatTextHasMore = hasMore;
 }
 
 void GUI_3DS_SetHouseConfirm(uint8 houseID)
@@ -280,6 +313,8 @@ bool GUI_3DS_Init(void)
 
 	g_cursor3DS_X = 200;
 	g_cursor3DS_Y = 120;
+	s_toastText[0] = '\0';
+	s_toastUntilTick = 0;
 
 	Unit_3DS_Init();
 
@@ -366,26 +401,36 @@ void GUI_3DS_DrawText(uint8 *buf, int16 stride, int16 x, int16 y, const char *te
 			continue;
 		}
 
-		/* Lithuanian UTF-8 decode & transliterate */
+		/* Lithuanian UTF-8 decode + diacritic flag */
+		int dia = 0;
 		if (c == 0xC4 || c == 0xC5) {
 			unsigned char next = *p;
 			if (next == 0) break;
 			p++;
 			if (c == 0xC4) {
 				switch (next) {
-					case 0x84: case 0x85: c = 'A'; break; /* Ą, ą */
-					case 0x8C: case 0x8D: c = 'C'; break; /* Č, č */
-					case 0x98: case 0x99: c = 'E'; break; /* Ę, ę */
-					case 0x96: case 0x97: c = 'E'; break; /* Ė, ė */
-					case 0xAE: case 0xAF: c = 'I'; break; /* Į, į */
+					case 0x84: c = 'A'; dia = 1; break; /* Ą */
+					case 0x85: c = 'a'; dia = 1; break; /* ą */
+					case 0x8C: c = 'C'; dia = 2; break; /* Č */
+					case 0x8D: c = 'c'; dia = 2; break; /* č */
+					case 0x98: c = 'E'; dia = 1; break; /* Ę */
+					case 0x99: c = 'e'; dia = 1; break; /* ę */
+					case 0x96: c = 'E'; dia = 3; break; /* Ė */
+					case 0x97: c = 'e'; dia = 3; break; /* ė */
+					case 0xAE: c = 'I'; dia = 1; break; /* Į */
+					case 0xAF: c = 'i'; dia = 1; break; /* į */
 					default: c = '?'; break;
 				}
-			} else if (c == 0xC5) {
+			} else {
 				switch (next) {
-					case 0xA0: case 0xA1: c = 'S'; break; /* Š, š */
-					case 0xB2: case 0xB3: c = 'U'; break; /* Ų, ų */
-					case 0xAA: case 0xAB: c = 'U'; break; /* Ū, ū */
-					case 0xBD: case 0xBE: c = 'Z'; break; /* Ž, ž */
+					case 0xA0: c = 'S'; dia = 2; break; /* Š */
+					case 0xA1: c = 's'; dia = 2; break; /* š */
+					case 0xB2: c = 'U'; dia = 1; break; /* Ų */
+					case 0xB3: c = 'u'; dia = 1; break; /* ų */
+					case 0xAA: c = 'U'; dia = 4; break; /* Ū */
+					case 0xAB: c = 'u'; dia = 4; break; /* ū */
+					case 0xBD: c = 'Z'; dia = 2; break; /* Ž */
+					case 0xBE: c = 'z'; dia = 2; break; /* ž */
 					default: c = '?'; break;
 				}
 			}
@@ -401,6 +446,21 @@ void GUI_3DS_DrawText(uint8 *buf, int16 stride, int16 x, int16 y, const char *te
 					GUI_3DS_PutPixel(buf, stride, curX + col, y + row, color);
 				}
 			}
+		}
+		if (dia == 1) {
+			GUI_3DS_PutPixel(buf, stride, curX + 5, y + 7, color);
+			GUI_3DS_PutPixel(buf, stride, curX + 6, y + 8, color);
+		} else if (dia == 2) {
+			GUI_3DS_PutPixel(buf, stride, curX + 2, y - 2, color);
+			GUI_3DS_PutPixel(buf, stride, curX + 3, y - 1, color);
+			GUI_3DS_PutPixel(buf, stride, curX + 4, y - 2, color);
+		} else if (dia == 3) {
+			GUI_3DS_PutPixel(buf, stride, curX + 3, y - 2, color);
+			GUI_3DS_PutPixel(buf, stride, curX + 4, y - 2, color);
+		} else if (dia == 4) {
+			GUI_3DS_PutPixel(buf, stride, curX + 2, y - 2, color);
+			GUI_3DS_PutPixel(buf, stride, curX + 3, y - 2, color);
+			GUI_3DS_PutPixel(buf, stride, curX + 4, y - 2, color);
 		}
 		curX += 8;
 	}
@@ -483,29 +543,32 @@ bool GUI_3DS_MapPosToScreenPos(tile32 mapPos, int16 *outX, int16 *outY)
 	return inViewport;
 }
 
-/* Classic Dune II mouse cursor arrow (11x15 pixels: 0 = black outline, 254 = white, 255 = transparent) */
-static const uint8 s_cursorArrow[15][11] = {
-	{0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-	{0,   0, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-	{0, 254,   0, 255, 255, 255, 255, 255, 255, 255, 255},
-	{0, 254, 254,   0, 255, 255, 255, 255, 255, 255, 255},
-	{0, 254, 254, 254,   0, 255, 255, 255, 255, 255, 255},
-	{0, 254, 254, 254, 254,   0, 255, 255, 255, 255, 255},
-	{0, 254, 254, 254, 254, 254,   0, 255, 255, 255, 255},
-	{0, 254, 254, 254, 254, 254, 254,   0, 255, 255, 255},
-	{0, 254, 254, 254, 254, 254, 254, 254,   0, 255, 255},
-	{0, 254, 254, 254, 254, 254,   0,   0,   0,   0, 255},
-	{0, 254, 254,   0, 254, 254,   0, 255, 255, 255, 255},
-	{0, 254,   0, 255,   0, 254, 254,   0, 255, 255, 255},
-	{0,   0, 255, 255, 255,   0, 254, 254,   0, 255, 255},
-	{255, 255, 255, 255, 255, 255,   0, 254, 254,   0, 255},
-	{255, 255, 255, 255, 255, 255, 255,   0,   0,   0, 255},
+/* Classic Dune II mouse cursor arrow (11x18: 0 = black outline, 254 = white, 216 = ivory bevel, 15 = gold bevel, 255 = transparent) */
+static const uint8 s_cursorArrow[18][11] = {
+	{  0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
+	{  0,   0, 255, 255, 255, 255, 255, 255, 255, 255, 255},
+	{  0, 254,   0, 255, 255, 255, 255, 255, 255, 255, 255},
+	{  0, 254, 254,   0, 255, 255, 255, 255, 255, 255, 255},
+	{  0, 254, 254, 216,   0, 255, 255, 255, 255, 255, 255},
+	{  0, 254, 254, 254, 216,   0, 255, 255, 255, 255, 255},
+	{  0, 254, 254, 254, 254, 216,   0, 255, 255, 255, 255},
+	{  0, 254, 254, 254, 254, 254, 216,   0, 255, 255, 255},
+	{  0, 254, 254, 254, 254, 254, 254, 216,   0, 255, 255},
+	{  0, 254, 254, 254, 254, 254, 254, 254, 216,   0, 255},
+	{  0, 254, 254, 254, 254, 254, 216,  15,  15,  15,   0},
+	{  0, 254, 254, 254,   0, 254, 216,   0,   0,   0,   0},
+	{  0, 254, 254,   0,   0, 254, 216,   0, 255, 255, 255},
+	{  0, 254,   0, 255, 255,   0, 254, 216,   0, 255, 255},
+	{  0,   0, 255, 255, 255,   0, 254, 216,   0, 255, 255},
+	{255, 255, 255, 255, 255, 255,   0, 254, 216,   0, 255},
+	{255, 255, 255, 255, 255, 255,   0, 254, 216,   0, 255},
+	{255, 255, 255, 255, 255, 255, 255,   0,   0, 255, 255},
 };
 
 static void GUI_3DS_DrawCursor(uint8 *buf, int16 stride, int16 x, int16 y)
 {
 	uint8 *mask = (stride == TOP_WIDTH) ? g_topScreenUIMask : g_bottomScreenUIMask;
-	for (int r = 0; r < 15; r++) {
+	for (int r = 0; r < 18; r++) {
 		int py = y + r;
 		if (py < 0 || py >= 240) continue;
 		for (int c = 0; c < 11; c++) {
@@ -521,35 +584,95 @@ static void GUI_3DS_DrawCursor(uint8 *buf, int16 stride, int16 x, int16 y)
 	}
 }
 
-/* Classic Dune II directional scroll arrow (11x12 pixels pointing UP: 0 = black outline, 254 = white, 255 = transparent) */
+/* Classic Dune II MOUSE.SHP #5 circular target reticle (15x15 mask, center dot at 7,7) */
+static const uint8 s_cursorTarget[15][15] = {
+	{0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0},
+	{0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0},
+	{0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0},
+	{0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0},
+	{0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0},
+	{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+	{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+	{1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1},
+	{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+	{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+	{0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0},
+	{0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0},
+	{0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0},
+	{0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0},
+	{0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0},
+};
+
+static bool CursorOverEnemy(int16 cx, int16 cy)
+{
+	uint16 packed = GUI_3DS_ScreenPosToTile(cx, cy);
+	Unit *u = Unit_Get_ByPackedTile(packed);
+	if (u != NULL && u->o.flags.s.allocated && !u->o.flags.s.isNotOnMap &&
+	    u->o.houseID != g_playerHouseID &&
+	    ((u->o.seenByHouses & (1 << g_playerHouseID)) != 0 || g_debugScenario)) {
+		return true;
+	}
+	Structure *s = Structure_Get_ByPackedTile(packed);
+	if (s != NULL && s->o.flags.s.allocated && !s->o.flags.s.isNotOnMap &&
+	    s->o.houseID != g_playerHouseID &&
+	    ((s->o.seenByHouses & (1 << g_playerHouseID)) != 0 || g_debugScenario)) {
+		return true;
+	}
+	return false;
+}
+
+static void GUI_3DS_DrawTargetCursor(uint8 *buf, int16 stride, int16 x, int16 y, uint8 ringColor)
+{
+	uint8 *mask = (stride == TOP_WIDTH) ? g_topScreenUIMask : g_bottomScreenUIMask;
+	int16 ox = x - 7;
+	int16 oy = y - 7;
+	for (int pass = 0; pass < 2; pass++) {
+		int off = (pass == 0) ? 1 : 0;
+		uint8 color = (pass == 0) ? 0 : ringColor;
+		for (int r = 0; r < 15; r++) {
+			int py = oy + r + off;
+			if (py < 0 || py >= 240) continue;
+			for (int c = 0; c < 15; c++) {
+				if (!s_cursorTarget[r][c]) continue;
+				int px = ox + c + off;
+				if (px >= 0 && px < stride) {
+					buf[py * stride + px] = color;
+					mask[py * stride + px] = 2;
+				}
+			}
+		}
+	}
+}
+
+/* Classic Dune II directional scroll arrow (11x12 pixels pointing UP: 0 = black outline, 254 = white, 216/15 = bevel, 255 = transparent) */
 static const uint8 s_cursorScrollUp[12][11] = {
 	{255, 255, 255, 255, 255,   0, 255, 255, 255, 255, 255},
 	{255, 255, 255, 255,   0, 254,   0, 255, 255, 255, 255},
-	{255, 255, 255,   0, 254, 254, 254,   0, 255, 255, 255},
-	{255, 255,   0, 254, 254, 254, 254, 254,   0, 255, 255},
-	{255,   0, 254, 254, 254, 254, 254, 254, 254,   0, 255},
-	{  0, 254, 254, 254, 254, 254, 254, 254, 254, 254,   0},
-	{  0,   0,   0,   0, 254, 254, 254,   0,   0,   0,   0},
-	{255, 255, 255,   0, 254, 254, 254,   0, 255, 255, 255},
-	{255, 255, 255,   0, 254, 254, 254,   0, 255, 255, 255},
-	{255, 255, 255,   0, 254, 254, 254,   0, 255, 255, 255},
-	{255, 255, 255,   0, 254, 254, 254,   0, 255, 255, 255},
+	{255, 255, 255,   0, 254, 254, 216,   0, 255, 255, 255},
+	{255, 255,   0, 254, 254, 254, 254, 216,   0, 255, 255},
+	{255,   0, 254, 254, 254, 254, 254, 254, 216,   0, 255},
+	{  0, 254, 254, 254, 254, 254, 254, 216,  15,  15,   0},
+	{  0,   0,   0,   0, 254, 254, 216,   0,   0,   0,   0},
+	{255, 255, 255,   0, 254, 254, 216,   0, 255, 255, 255},
+	{255, 255, 255,   0, 254, 254, 216,   0, 255, 255, 255},
+	{255, 255, 255,   0, 254, 254, 216,   0, 255, 255, 255},
+	{255, 255, 255,   0, 254, 216,  15,   0, 255, 255, 255},
 	{255, 255, 255,   0,   0,   0,   0,   0, 255, 255, 255},
 };
 
-/* Diagonal scroll arrow (11x11 pixels pointing UP-LEFT: 0 = black outline, 254 = white, 255 = transparent) */
+/* Diagonal scroll arrow (11x11 pixels pointing UP-LEFT: 0 = black outline, 254 = white, 216/15 = bevel, 255 = transparent) */
 static const uint8 s_cursorScrollDiag[11][11] = {
 	{  0,   0,   0,   0,   0,   0,   0,   0, 255, 255, 255},
 	{  0, 254, 254, 254, 254, 254, 254,   0, 255, 255, 255},
 	{  0, 254, 254, 254, 254, 254,   0, 255, 255, 255, 255},
+	{  0, 254, 254, 254, 254,   0, 255, 255, 255, 255, 255},
 	{  0, 254, 254, 254, 254, 254,   0, 255, 255, 255, 255},
-	{  0, 254, 254, 254, 254, 254, 254,   0, 255, 255, 255},
-	{  0, 254, 254, 254, 254, 254, 254, 254,   0, 255, 255},
-	{  0, 254,   0,   0, 254, 254, 254, 254, 254,   0, 255},
-	{  0,   0, 255, 255,   0, 254, 254, 254, 254, 254,   0},
-	{255, 255, 255, 255, 255,   0, 254, 254, 254,   0, 255},
-	{255, 255, 255, 255, 255, 255,   0, 254,   0, 255, 255},
-	{255, 255, 255, 255, 255, 255, 255,   0, 255, 255, 255},
+	{  0, 254, 254,   0, 254, 254, 216,   0, 255, 255, 255},
+	{  0, 254,   0, 255,   0, 254, 254, 216,   0, 255, 255},
+	{  0,   0, 255, 255, 255,   0, 216, 216,  15,   0, 255},
+	{255, 255, 255, 255, 255, 255,   0, 216,  15,   0, 255},
+	{255, 255, 255, 255, 255, 255, 255,   0,   0,   0, 255},
+	{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
 };
 
 static void GUI_3DS_DrawScrollCursor(uint8 *buf, int16 stride, int16 x, int16 y, int dx, int dy)
@@ -621,7 +744,7 @@ bool g_3dsMentatExit = false;
 
 bool GUI_3DS_IsCutsceneOrBriefing(void)
 {
-	if (g_3dsMentatHelpActive) return true;
+	if (g_3dsMentatHelpActive || s_mentatButtons != NULL) return true;
 	/* Production uses MENTAT selection internally, but has its own two-screen UI. */
 	if (GUI_3DS_IsFactoryWindow() || g_3dsHousePickerActive || GUI_3DS_IsTitleMenu() || (g_widgetLinkedListTail != NULL)) return false;
 	if (s_houseConfirmID != 0xFF) return true;
@@ -671,6 +794,7 @@ void GUI_3DS_SetMentatButtons(struct Widget *buttons)
 	s_mentatButtons = buttons;
 	s_dialogFocus = 0;
 	s_mentatChoice = 0;
+	s_mentatTextHasMore = false;
 	s_dialogChosen = NULL;
 	if (buttons != NULL) {
 		s_subtitleText[0] = '\0';
@@ -696,6 +820,8 @@ bool GUI_3DS_IsMentatButton(const struct Widget *w)
 	    w->drawParameterNormal.spriteID == 374 ||  /* Yes pressed */
 	    w->drawParameterNormal.spriteID == 375 ||  /* No */
 	    w->drawParameterNormal.spriteID == 376 ||  /* No pressed */
+	    w->drawParameterNormal.spriteID == 377 ||  /* Exit */
+	    w->drawParameterNormal.spriteID == 378 ||  /* Exit pressed */
 	    w->drawParameterNormal.spriteID == 379 ||  /* Proceed */
 	    w->drawParameterNormal.spriteID == 380 ||  /* Proceed pressed */
 	    w->drawParameterNormal.spriteID == 381 ||  /* Repeat */
@@ -751,6 +877,28 @@ bool GUI_3DS_AreHeraldCrestsValid(void)
 	return s_heraldCrestsValid;
 }
 
+static uint8 s_specialPortraits[3][69 * 42];
+static uint8 s_specialPortraitMask = 0;
+
+void GUI_3DS_CacheSpecialPortrait(uint8 weaponIndex, const uint8 *framePixels, uint16 width, uint16 height)
+{
+	if (weaponIndex >= 3 || framePixels == NULL || width == 0 || height == 0) return;
+	for (int dy = 0; dy < 42; dy++) {
+		int sy = dy * height / 42;
+		const uint8 *srcRow = framePixels + sy * SCREEN_WIDTH;
+		uint8 *dstRow = s_specialPortraits[weaponIndex] + dy * 69;
+		for (int dx = 0; dx < 69; dx++) {
+			dstRow[dx] = srcRow[dx * width / 69];
+		}
+	}
+	s_specialPortraitMask |= (uint8)(1u << weaponIndex);
+}
+
+bool GUI_3DS_AreSpecialPortraitsValid(void)
+{
+	return s_specialPortraitMask != 0;
+}
+
 void GUI_3DS_SetWindow(struct WindowDesc *window)
 {
 	/* Keep the last battlefield frame so the top screen can show a paused view behind menus. */
@@ -758,14 +906,17 @@ void GUI_3DS_SetWindow(struct WindowDesc *window)
 		memcpy(s_pauseSnapshot, g_topScreenBuffer, sizeof(s_pauseSnapshot));
 		s_pauseValid = true;
 	}
+	bool sameWindow = (s_dialogWindow == window && window != NULL);
 	s_dialogWindow = window;
 	s_dialogChosen = NULL;
-	s_dialogFocus = 0;
-	if (window == &g_saveLoadWindowDesc && window->stringID == STR_SELECT_A_SAVED_GAME_TO_LOAD) {
-		for (int i = 0; i < 5; i++) {
-			if (s_saveSlots[i].used) {
-				s_dialogFocus = i;
-				break;
+	if (!sameWindow) {
+		s_dialogFocus = 0;
+		if (window == &g_saveLoadWindowDesc && window->stringID == STR_SELECT_A_SAVED_GAME_TO_LOAD) {
+			for (int i = 0; i < 5; i++) {
+				if (s_saveSlots[i].used) {
+					s_dialogFocus = i;
+					break;
+				}
 			}
 		}
 	}
@@ -814,12 +965,46 @@ static int DialogItems(Widget **items)
 
 
 static void MenuButton(int x,int y,int w,int h,const char *label,bool highlight,bool dim);
+static void ButtonLabelText(int x, int y, int w, int h, const char *label, uint8 color, int shadowColor);
 
-/* Vertical layout of the dialog list on the bottom screen. */
-static void DialogLayout(int *y0, int *step, int *rows)
+/* Shared vertical/horizontal layout for CustomDialog on the bottom screen. */
+static void DialogMetrics(int count, int *outHeadingY, int *outHeadingCount, char headingLines[2][128],
+                          int *outBtnX, int *outBtnW, int *outY0, int *outStep, int *outRows)
 {
-	if (s_dialogWindow == &g_optionsWindowDesc) { *y0 = 25; *step = 27; *rows = 7; }
-	else { *y0 = 36; *step = 27; *rows = 6; }
+	int step = 27, rows = 6;
+	if (s_dialogWindow == &g_gameControlWindowDesc) { step = 25; rows = 8; }
+	else if (s_dialogWindow == &g_optionsWindowDesc) { step = 27; rows = 7; }
+	else if (count <= 2) { step = 34; rows = 6; }
+
+	int headingCount = 0;
+	if (s_dialogWindow != NULL && s_dialogWindow != &g_optionsWindowDesc) {
+		const char *heading = GUI_String_Get_ByIndex(s_dialogWindow->stringID);
+		if (heading != NULL && heading[0] != '\0') {
+			const char *remaining;
+			headingCount = Cairo_WrapText(heading, BOTTOM_WIDTH - 24, headingLines, 2, &remaining);
+		}
+	}
+
+	int headingH = (headingCount > 0) ? ((headingCount - 1) * CAIRO_LINE_H + CAIRO_GLYPH_H) : 0;
+	int headingGap = (headingCount > 0) ? ((count <= 2) ? 14 : 8) : 0;
+	int visible = min(count, rows);
+	int listH = (visible > 0) ? ((visible - 1) * step + (step - 3)) : 0;
+	int totalH = headingH + headingGap + listH;
+	int topY = max(4, (BOTTOM_HEIGHT - totalH) / 2);
+
+	if (outHeadingY) *outHeadingY = topY + CAIRO_BASE_ROW;
+	if (outHeadingCount) *outHeadingCount = headingCount;
+	*outY0 = topY + headingH + headingGap;
+	*outStep = step;
+	*outRows = rows;
+	if (outBtnW) *outBtnW = (count <= 2) ? 220 : 296;
+	if (outBtnX) *outBtnX = (BOTTOM_WIDTH - ((count <= 2) ? 220 : 296)) / 2;
+}
+
+static void DialogLayout(int count, int *y0, int *step, int *rows, int *btnX, int *btnW)
+{
+	char headingLines[2][128];
+	DialogMetrics(count, NULL, NULL, headingLines, btnX, btnW, y0, step, rows);
 }
 
 static const char *s_titleLabels[6];
@@ -839,20 +1024,21 @@ void GUI_3DS_SetTitleLabels(const char **labels)
 	for (int i = 0; i < 6; i++) s_titleLabels[i] = labels[i];
 }
 
-/* Measure text width in the native Dune II INTRO.FNT (g_fontIntro) */
+/* Measure text width in the native Dune II INTRO.FNT (g_fontIntro), UTF-8 aware */
 static int GUI_3DS_GetIntroFontWidth(const char *str)
 {
 	if (str == NULL) return 0;
 	if (g_fontIntro == NULL || g_fontIntro->chars == NULL) return (int)strlen(str) * 8;
 	int w = 0;
-	for (const unsigned char *p = (const unsigned char *)str; *p != '\0'; p++) {
-		unsigned char c = *p;
+	const char *p = str;
+	while (*p != '\0') {
+		unsigned char c = Font_NextChar(&p, NULL);
 		if (c < g_fontIntro->count) w += g_fontIntro->chars[c].width + 1;
 	}
 	return (w > 0) ? (w - 1) : 0;
 }
 
-/* Draw ornate text using the native Dune II INTRO.FNT (g_fontIntro) */
+/* Draw ornate text using the native Dune II INTRO.FNT (g_fontIntro) with Lithuanian diacritics */
 static int GUI_3DS_DrawIntroFontText(uint8 *buf, int stride, int x, int y, const char *str, uint8 mainColor, uint8 shadowColor)
 {
 	if (str == NULL || g_fontIntro == NULL || g_fontIntro->chars == NULL) {
@@ -861,8 +1047,10 @@ static int GUI_3DS_DrawIntroFontText(uint8 *buf, int stride, int x, int y, const
 	}
 	uint8 *mask = (stride == TOP_WIDTH) ? g_topScreenUIMask : g_bottomScreenUIMask;
 	int curX = x;
-	for (const unsigned char *p = (const unsigned char *)str; *p != '\0'; p++) {
-		unsigned char c = *p;
+	const char *p = str;
+	while (*p != '\0') {
+		uint8 dia = FONT_DIA_NONE;
+		unsigned char c = Font_NextChar(&p, &dia);
 		if (c >= g_fontIntro->count) continue;
 		FontChar *fc = &g_fontIntro->chars[c];
 		if (fc->data != NULL && fc->width > 0) {
@@ -878,6 +1066,23 @@ static int GUI_3DS_DrawIntroFontText(uint8 *buf, int stride, int x, int y, const
 					uint8 drawCol = (px == 1) ? mainColor : shadowColor;
 					buf[py * stride + pxX] = drawCol;
 					mask[py * stride + pxX] = (drawCol >= 110 && drawCol <= 119) ? 1 : 2;
+				}
+			}
+			if (dia != FONT_DIA_NONE) {
+				int topY = y + (int)fc->unusedLines - 3;
+				int midX = curX + fc->width / 2;
+				uint8 maskVal = (mainColor >= 110 && mainColor <= 119) ? 1 : 2;
+				if (dia == FONT_DIA_DOT && topY >= 0) {
+					for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+						int pxX = midX + dx, py = topY + dy;
+						if (pxX >= 0 && pxX < stride && py >= 0 && py < 240) { buf[py * stride + pxX] = mainColor; mask[py * stride + pxX] = maskVal; }
+					}
+				} else if (dia == FONT_DIA_CARON && topY >= 1) {
+					int pts[3][2] = {{-2, -1}, {0, 0}, {2, -1}};
+					for (int k = 0; k < 3; k++) {
+						int pxX = midX + pts[k][0], py = topY + pts[k][1];
+						if (pxX >= 0 && pxX < stride && py >= 0 && py < 240) { buf[py * stride + pxX] = mainColor; mask[py * stride + pxX] = maskVal; }
+					}
 				}
 			}
 		}
@@ -909,16 +1114,7 @@ static void MenuButton(int x, int y, int w, int h, const char *label, bool highl
 	}
 	if (label != NULL && label[0] != '\0') {
 		uint8 textColor = dim ? 110 : (highlight ? 216 : 15);
-		int textLen = 0;
-		for (const unsigned char *p = (const unsigned char *)label; *p != '\0'; ) {
-			if (*p == 0xC4 || *p == 0xC5) { p += 2; }
-			else { p++; }
-			textLen++;
-		}
-		int tx = max(x + 4, x + (w - textLen * 8) / 2);
-		int ty = y + (h - 8) / 2;
-		GUI_3DS_DrawText(buf, 320, tx + 1, ty + 1, label, 0);
-		GUI_3DS_DrawText(buf, 320, tx, ty, label, textColor);
+		ButtonLabelText(x, y, w, h, label, textColor, dim ? CAIRO_NO_SHADOW : 0);
 	}
 }
 
@@ -926,42 +1122,14 @@ static void MenuButton(int x, int y, int w, int h, const char *label, bool highl
 static void GUI_3DS_DrawCenteredSubtitle(const char *text, int centerY)
 {
 	if (text == NULL || text[0] == '\0') return;
-	char lines[10][42];
-	int numLines = 0;
-	const char *p = text;
-
-	while (*p != '\0' && numLines < 10) {
-		while (*p == ' ') p++;
-		if (*p == '\0') break;
-		if (*p == '\r' || *p == '\n') {
-			p++;
-			continue;
-		}
-		int maxChars = 34;
-		int len = 0;
-		int lastSpace = -1;
-		while (p[len] != '\0' && p[len] != '\r' && p[len] != '\n' && len < maxChars) {
-			if (p[len] == ' ') lastSpace = len;
-			len++;
-		}
-		if (p[len] != '\0' && p[len] != '\r' && p[len] != '\n' && lastSpace > 0) {
-			len = lastSpace;
-		}
-		memcpy(lines[numLines], p, len);
-		lines[numLines][len] = '\0';
-		numLines++;
-		p += len;
-		if (*p == '\r') p++;
-		if (*p == '\n') p++;
-	}
-
-	int lineStep = 16;
-	int startY = centerY - (numLines * lineStep) / 2 + 4;
+	char lines[8][128];
+	const char *next = NULL;
+	int numLines = Cairo_WrapText(text, BOTTOM_WIDTH - 24, lines, 8, &next);
+	int lineStep = CAIRO_LINE_H;
+	int startY = centerY - ((numLines - 1) * lineStep) / 2 + 4;
 	for (int i = 0; i < numLines; i++) {
-		int lineW = (int)strlen(lines[i]) * 8;
-		int tx = max(8, (BOTTOM_WIDTH - lineW) / 2);
-		int ty = startY + i * lineStep;
-		GUI_3DS_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, tx, ty, lines[i], 15);
+		Cairo_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, BOTTOM_WIDTH / 2,
+			startY + i * lineStep, lines[i], 15, CAIRO_NO_SHADOW);
 	}
 }
 
@@ -1116,7 +1284,7 @@ void GUI_3DS_FactoryBegin(void)
 		for (int i = 0; i < g_factoryWindowTotal; i++) {
 			if (g_factoryWindowItems[i].objectType == target) {
 				s_factoryFocus = i;
-				s_factoryScroll = (i / SHOP_GRID_COLS) * SHOP_GRID_COLS;
+				s_factoryScroll = i / SHOP_GRID_COLS;
 				g_factoryWindowBase = i > 3 ? i - 3 : 0;
 				g_factoryWindowSelected = i - g_factoryWindowBase;
 				GUI_FactoryWindow_DrawDetails();
@@ -1128,7 +1296,9 @@ void GUI_3DS_FactoryBegin(void)
 
 int GUI_3DS_GetFactoryFocus(void)
 {
-	return (s_factoryFocus < g_factoryWindowTotal) ? s_factoryFocus : 0;
+	if (s_factoryFocus < g_factoryWindowTotal) return s_factoryFocus;
+	/* Back and Buy move focus to a button, while the engine keeps the item. */
+	return g_factoryWindowBase + g_factoryWindowSelected;
 }
 
 void GUI_3DS_FactoryEvents(void)
@@ -1165,23 +1335,16 @@ void GUI_3DS_FactoryEvents(void)
 static void DialogBottom(void)
 {
 	Widget *items[9]; int count = DialogItems(items);
-	int y0, step, rows; DialogLayout(&y0, &step, &rows);
+	char headingLines[2][128];
+	int headingY, headingCount, btnX, btnW, y0, step, rows;
+	DialogMetrics(count, &headingY, &headingCount, headingLines, &btnX, &btnW, &y0, &step, &rows);
 	if (count) s_dialogFocus = min(s_dialogFocus, count - 1);
 	memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
 	memset(g_bottomScreenUIMask, 2, sizeof(g_bottomScreenUIMask));
 
-	if (s_dialogWindow != &g_optionsWindowDesc) {
-		const char *heading = GUI_String_Get_ByIndex(s_dialogWindow->stringID);
-		if (heading != NULL && heading[0] != '\0') {
-			int headLen = 0;
-			for (const unsigned char *p = (const unsigned char *)heading; *p != '\0';) {
-				if (*p == 0xC4 || *p == 0xC5) { p += 2; }
-				else { p++; }
-				headLen++;
-			}
-			int headX = max(8, (BOTTOM_WIDTH - headLen * 8) / 2);
-			GUI_3DS_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, headX, 14, heading, 15);
-		}
+	for (int i = 0; i < headingCount; i++) {
+		Cairo_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, BOTTOM_WIDTH / 2,
+			headingY + i * CAIRO_LINE_H, headingLines[i], 15, CAIRO_NO_SHADOW);
 	}
 
 	int first = max(0, s_dialogFocus - (rows - 1));
@@ -1198,7 +1361,8 @@ static void DialogBottom(void)
 		if (s_dialogWindow == &g_optionsWindowDesc && items[i]->stringID == STR_CONTINUE_GAME && label) {
 			snprintf(combined, sizeof(combined), "%.28s (B)", label);
 			label = combined;
-		} else if (items[i]->stringID == STR_CANCEL || items[i]->index == 0x23) {
+		} else if (items[i]->stringID == STR_CANCEL || items[i]->stringID == STR_PREVIOUS ||
+		           (s_dialogWindow == &g_saveLoadWindowDesc && items[i]->index == 0x23)) {
 			snprintf(combined, sizeof(combined), "%s", L10N("Back (B)", "Atgal (B)"));
 			label = combined;
 		}
@@ -1206,13 +1370,14 @@ static void DialogBottom(void)
 
 		bool selected = (i == s_dialogFocus);
 		bool dim = (s_dialogWindow != NULL && s_dialogWindow->stringID == STR_SELECT_A_SAVED_GAME_TO_LOAD && i < 5 && !s_saveSlots[i].used);
-		MenuButton(12,y,296,step-3,label,selected,dim);
+		MenuButton(btnX, y, btnW, step - 3, NULL, selected, dim);
+		ButtonLabelText(btnX, y, btnW, step - 3, label, dim ? 110 : selected ? 216 : 15, dim ? CAIRO_NO_SHADOW : 0);
 	}
 }
 
 void GUI_3DS_FactoryMinus(void)
 {
-	if (GUI_3DS_IsFactoryWindow() && g_factoryWindowStarport) {
+	if (GUI_3DS_IsFactoryWindow() && g_factoryWindowStarport && s_factoryFocus < g_factoryWindowTotal) {
 		s_factoryPending = g_factoryWindowTotal + 4;
 	}
 }
@@ -1229,6 +1394,39 @@ static inline uint8 ShopHouseTint(void)
 	if (g_playerHouseID == HOUSE_ATREIDES) return SP_TINT_BLUE;
 	if (g_playerHouseID == HOUSE_ORDOS)    return SP_TINT_GREEN;
 	return SP_TINT_RED;
+}
+
+/* Native bold bitmap button labels with a one-pixel shadow.
+ * Lines are vertically centred as a block; overlong labels are clipped with an ellipsis rather than changing fonts. */
+static void ButtonLabelText(int x, int y, int w, int h, const char *label, uint8 color, int shadowColor)
+{
+	if (!label || !*label) return;
+	const char *lines[2] = { label, NULL };
+	int len[2] = { (int)strlen(label), 0 }, count = 1;
+	const char *nl = strchr(label, '\n');
+	if (nl) { len[0] = (int)(nl - label); lines[1] = nl + 1; len[1] = (int)strlen(nl + 1); count = 2; }
+	char buffers[2][4 * (BOTTOM_WIDTH / 8) + 1];
+	for (int i = 0; i < count; i++) {
+		const char *end = lines[i] + len[i];
+		const char *p = lines[i];
+		int capacity = clamp((w - 8) / 8, 0, BOTTOM_WIDTH / 8);
+		int glyphs = Cairo_Width4(p, len[i]) / 32;
+		bool shorten = glyphs > capacity;
+		int keep = shorten ? max(0, capacity - 3) : glyphs;
+		for (int j = 0; j < keep; j++) Cairo_NextChar(&p, end);
+		int bytes = (int)(p - lines[i]);
+		memcpy(buffers[i], lines[i], bytes);
+		buffers[i][bytes] = '\0';
+		if (shorten && capacity >= 3) memcpy(buffers[i] + bytes, "...", 4);
+		lines[i] = buffers[i];
+	}
+	CairoBounds bounds = Cairo_BlockBounds(lines, count, CAIRO_LINE_H, shadowColor >= 0);
+	int cx = x + (w - 1 - bounds.left - bounds.right) / 2;
+	int baseline = y + (h - 1 - bounds.top - bounds.bottom) / 2;
+	for (int i = 0; i < count; i++) {
+		Cairo_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, cx, baseline + i * CAIRO_LINE_H,
+			lines[i], color, shadowColor);
+	}
 }
 
 /* Dedicated shop button per Figma node 150:397.
@@ -1260,30 +1458,60 @@ static void ShopButton(int x, int y, int w, int h, const char *label, bool selec
 	}
 	if (label && *label) {
 		uint8 textColor = dim ? SP_TEXT_DIM : SP_WHITE;
-		int baseY = y + h / 2 + 4;
-		Tiny5_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, x + w / 2, baseY, label, textColor, true);
+		ButtonLabelText(x, y, w, h, label, textColor, dim ? CAIRO_NO_SHADOW : SP_BLACK);
 	}
 }
 
 static void ShopTileIcon(int x, int y, uint16 spriteID)
 {
+	typedef struct ShopIconCacheEntry {
+		const uint8 *sprite;
+		uint16 spriteID;
+		uint8 w, h;
+		uint8 pixels[32 * 24];
+	} ShopIconCacheEntry;
+	static ShopIconCacheEntry s_shopIconCache[16];
+
 	uint8 *sprite = g_sprites[spriteID];
 	if (sprite == NULL) return;
 	int w = Sprite_GetWidth(sprite), h = Sprite_GetHeight(sprite);
 	if (w > 64 || h > 64) return;
+
+	const uint8 *pix = NULL;
+	int pixStride = w;
 	uint8 saved[64 * 64];
-	uint8 *scratch = GFX_Screen_Get_ByIndex(SCREEN_2);
-	if (scratch == NULL) return;
-	for (int row = 0; row < h; row++) {
-		memcpy(saved + row * w, scratch + row * 320, w);
-		memset(scratch + row * 320, 0, w);
+	uint8 *scratch = NULL;
+	ShopIconCacheEntry *entry = &s_shopIconCache[spriteID & 15];
+	if (w <= 32 && h <= 24 && entry->sprite == sprite && entry->spriteID == spriteID && entry->w == w && entry->h == h) {
+		pix = entry->pixels;
+	} else {
+		scratch = GFX_Screen_Get_ByIndex(SCREEN_2);
+		if (scratch == NULL) return;
+		for (int row = 0; row < h; row++) {
+			memcpy(saved + row * w, scratch + row * 320, w);
+			memset(scratch + row * 320, 0, w);
+		}
+		GUI_DrawSprite(SCREEN_2, sprite, 0, 0, 0, 0);
+		if (w <= 32 && h <= 24) {
+			for (int row = 0; row < h; row++) {
+				memcpy(entry->pixels + row * w, scratch + row * 320, w);
+			}
+			entry->sprite = sprite;
+			entry->spriteID = spriteID;
+			entry->w = (uint8)w;
+			entry->h = (uint8)h;
+			pix = entry->pixels;
+		} else {
+			pix = scratch;
+			pixStride = 320;
+		}
 	}
-	GUI_DrawSprite(SCREEN_2, sprite, 0, 0, 0, 0);
+
 	int offX = (w < 32) ? (32 - w) / 2 : 0;
 	int offY = (h < 24) ? (24 - h) / 2 : 0;
 	for (int row = 0; row < h; row++) {
 		for (int col = 0; col < w; col++) {
-			uint8 px = scratch[row * 320 + col];
+			uint8 px = pix[row * pixStride + col];
 			if (px != 0) {
 				int dx = x + (offX + col) * 2;
 				int dy = y + (offY + row) * 2;
@@ -1299,8 +1527,10 @@ static void ShopTileIcon(int x, int y, uint16 spriteID)
 			}
 		}
 	}
-	for (int row = 0; row < h; row++) {
-		memcpy(scratch + row * 320, saved + row * w, w);
+	if (scratch != NULL) {
+		for (int row = 0; row < h; row++) {
+			memcpy(scratch + row * 320, saved + row * w, w);
+		}
 	}
 }
 
@@ -1405,7 +1635,7 @@ static void FactoryBottom(void)
 			int avail = g_factoryWindowItems[idx].objectInfo ? g_factoryWindowItems[idx].objectInfo->available : 0;
 			snprintf(qtyStr, sizeof(qtyStr), "%u %s %d",
 				g_factoryWindowItems[idx].amount,
-				L10N("of", "is"),
+				L10N("of", "iš"),
 				avail > 0 ? avail : 0);
 			for (int py = rowY + 16; py < rowY + 44; py++) {
 				for (int px = 90; px < 210; px++) {
@@ -1431,11 +1661,53 @@ static void FactoryBottom(void)
 		/* Bottom buttons: ORDER and BACK (B) */
 		bool orderSel = (s_factoryFocus == total);
 		bool orderDim = (g_factoryWindowOrdered == 0);
-		ShopButton(19, 206, 141, 27, L10N("ORDER", "UZSAKYTI"), orderSel, orderDim);
+		ShopButton(19, 206, 141, 27, L10N("ORDER", "UŽSAKYTI"), orderSel, orderDim);
 
 		bool backSel = (s_factoryFocus == total + 1);
 		ShopButton(160, 206, 141, 27, L10N("BACK (B)", "ATGAL (B)"), backSel, false);
 	}
+}
+
+static uint8 s_factoryPreview[184 * 112];
+static bool s_factoryPreviewValid;
+
+void GUI_3DS_CacheFactoryPreview(const uint8 *screen1)
+{
+	if (screen1 == NULL) {
+		s_factoryPreviewValid = false;
+		return;
+	}
+	for (int y = 0; y < 112; y++) {
+		memcpy(s_factoryPreview + y * 184, screen1 + (48 + y) * 320 + 128, 184);
+	}
+	s_factoryPreviewValid = true;
+}
+
+void GUI_3DS_UpdateFactoryPreviewOverlay(const uint8 *screen1, int16 srcY)
+{
+	if (!s_factoryPreviewValid || screen1 == NULL || srcY < 0 || srcY > 191) return;
+	for (int row = 0; row < 9; row++) {
+		memcpy(s_factoryPreview + (51 + row) * 184, screen1 + (srcY + row) * 320 + 128, 184);
+	}
+}
+
+static void FactoryPlaqueText(int baseline, const char *str, uint8 color)
+{
+	if (!str || !*str) return;
+	char buf[128];
+	const int capacity = 27; /* fits within 222px (27 * 8 = 216px) inside 230px plaque */
+	int glyphs = Cairo_Width4(str, (int)strlen(str)) / 32;
+	const char *p = str;
+	const char *end = str + strlen(str);
+	bool shorten = glyphs > capacity;
+	int keep = shorten ? max(0, capacity - 3) : glyphs;
+	for (int i = 0; i < keep; i++) Cairo_NextChar(&p, end);
+	int bytes = (int)(p - str);
+	if (bytes > (int)sizeof(buf) - 4) bytes = (int)sizeof(buf) - 4;
+	memcpy(buf, str, bytes);
+	buf[bytes] = '\0';
+	if (shorten) memcpy(buf + bytes, "...", 4);
+	Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, 201, baseline, buf, color, 0);
 }
 
 static void FactoryTop(void)
@@ -1443,55 +1715,53 @@ static void FactoryTop(void)
 	memcpy(g_topScreenBuffer, s_shopTopBG, 400 * 240);
 	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
 
+	/* The artwork has six 12-pixel cells with separators at 245, 257, ... 317. */
+	char credits[7];
+	snprintf(credits, sizeof(credits), "%6u", g_playerHouse ? (unsigned)g_playerHouse->credits : 0u);
+	for (int i = 0; i < 6; i++) {
+		if (credits[i] == ' ') continue;
+		const char digit[] = { credits[i], '\0' };
+		GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 247 + 12 * i, 12, digit, 97);
+	}
+
 	int chosen = (s_factoryFocus < g_factoryWindowTotal) ? s_factoryFocus : (g_factoryWindowBase + g_factoryWindowSelected);
 	FactoryWindowItem *item = (chosen >= 0 && chosen < g_factoryWindowTotal) ? &g_factoryWindowItems[chosen] : NULL;
 	if (!item || !item->objectInfo) return;
 
-	/* 1. Credits counter (top-right cells at X: 246..317, Y: 10..19) */
-	uint32 credVal = g_playerHouse ? g_playerHouse->credits : 0;
-	char credStr[16];
-	snprintf(credStr, sizeof(credStr), "%u", (unsigned)credVal);
-	int cw = (int)strlen(credStr) * 8;
-	int credX = 315 - cw;
-	if (credX < 246) credX = 246;
-	GUI_3DS_DrawText(g_topScreenBuffer, 400, credX, 11, credStr, 15);
-
 	/* 2. WSA animation preview centered in frame X: 89..309 (W=221), Y: 41..175 (H=135) */
-	uint8 *src = GFX_Screen_Get_ByIndex(SCREEN_1);
-	if (src != NULL) {
-		int wsaX = 107; /* 89 + (221 - 184) / 2 */
-		int wsaY = 52;  /* 41 + (135 - 112) / 2 */
+	int wsaX = 107; /* 89 + (221 - 184) / 2 */
+	int wsaY = 52;  /* 41 + (135 - 112) / 2 */
+	if (s_factoryPreviewValid) {
 		for (int y = 0; y < 112; y++) {
-			memcpy(g_topScreenBuffer + (wsaY + y) * 400 + wsaX, src + (48 + y) * 320 + 128, 184);
+			memcpy(g_topScreenBuffer + (wsaY + y) * 400 + wsaX, s_factoryPreview + y * 184, 184);
 			memset(g_topScreenUIMask + (wsaY + y) * 400 + wsaX, 0, 184);
+		}
+	} else {
+		uint8 *src = GFX_Screen_Get_ByIndex(SCREEN_1);
+		if (src != NULL) {
+			for (int y = 0; y < 112; y++) {
+				memcpy(g_topScreenBuffer + (wsaY + y) * 400 + wsaX, src + (48 + y) * 320 + 128, 184);
+				memset(g_topScreenUIMask + (wsaY + y) * 400 + wsaX, 0, 184);
+			}
 		}
 	}
 
 	/* 3. Bottom plaque: X: 86..315 (W=230), Y: 194..229 (H=36) */
-	/* Line 1: Item Name - Cost */
 	const char *name = String_Get_ByIndex(item->objectInfo->stringID_full);
 	char line1[64];
 	if (item->objectInfo->available < 0) {
-		snprintf(line1, sizeof(line1), "%s (%s)", name ? name : "", L10N("UPGRADE REQUIRED", "REIKIA TOBULINTI"));
+		snprintf(line1, sizeof(line1), "%s (%s)", name ? name : "", L10N("UPGRADE", "TOBULINTI"));
 	} else {
 		snprintf(line1, sizeof(line1), "%s - %u", name ? name : "", item->credits);
 	}
-	int len1 = 0;
-	for (const unsigned char *p = (const unsigned char *)line1; *p; ) {
-		if (*p == 0xC4 || *p == 0xC5) p += 2; else p++;
-		len1++;
-	}
-	int tx1 = max(90, 86 + (230 - len1 * 8) / 2);
-	GUI_3DS_DrawText(g_topScreenBuffer, 400, tx1 + 1, 200, line1, 0);
-	GUI_3DS_DrawText(g_topScreenBuffer, 400, tx1, 199, line1, 15);
+	FactoryPlaqueText(206, line1, 15);
 
-	/* Line 2: Stats / Description (no repeated quantity in Starport) */
 	char line2[64];
 	line2[0] = '\0';
 	if (g_factoryWindowConstructionYard) {
 		if (item->objectType < STRUCTURE_MAX) {
 			const StructureInfo *si = &g_table_structureInfo[item->objectType];
-			snprintf(line2, sizeof(line2), L10N("Armor: %u  Power: %+d", "Sarvai: %u  Energija: %+d"),
+			snprintf(line2, sizeof(line2), L10N("Armor: %u  Power: %+d", "Šarvai: %u  Energija: %+d"),
 				si->o.hitpoints, -si->powerUsage);
 		}
 	} else if (item->objectType < UNIT_MAX) {
@@ -1499,24 +1769,394 @@ static void FactoryTop(void)
 		snprintf(line2, sizeof(line2), L10N("HP: %u  Pow: %u  Spd: %u", "HP: %u  Galia: %u  Grt: %u"),
 			ui->o.hitpoints, ui->damage, ui->movingSpeedFactor);
 	}
-	if (line2[0] != '\0') {
-		int len2 = 0;
-		for (const unsigned char *p = (const unsigned char *)line2; *p; ) {
-			if (*p == 0xC4 || *p == 0xC5) p += 2; else p++;
-			len2++;
-		}
-		int tx2 = max(90, 86 + (230 - len2 * 8) / 2);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, tx2 + 1, 215, line2, 0);
-		GUI_3DS_DrawText(g_topScreenBuffer, 400, tx2, 214, line2, 110);
+	FactoryPlaqueText(223, line2, 117);
+}
+
+/* The original 304x120 region hit map starts at (8, 24) on SCREEN_0. */
+enum { STRATEGIC_X = 8, STRATEGIC_Y = 24, STRATEGIC_W = 304, STRATEGIC_H = 120 };
+static bool s_strategicActive;
+static uint32 s_strategicRegions;
+static int s_strategicX, s_strategicY;
+static uint16 s_strategicChosenRegion;
+static struct {
+	uint16 region;
+	int16 x, y;
+} s_strategicArrows[20];
+static unsigned s_strategicArrowCount;
+static char s_strategicText[256], s_strategicPreviousText[256];
+static int s_strategicTextStep;
+
+void GUI_3DS_StrategicBegin(void)
+{
+	s_strategicActive = true;
+	s_strategicRegions = 0;
+	s_strategicChosenRegion = 0;
+	s_strategicText[0] = s_strategicPreviousText[0] = '\0';
+	s_strategicTextStep = 13;
+}
+
+void GUI_3DS_StrategicEnd(void)
+{
+	s_strategicActive = false;
+	GUI_3DS_StrategicSelecting(0);
+}
+
+bool GUI_3DS_StrategicActive(void) { return s_strategicActive; }
+bool GUI_3DS_StrategicIsSelecting(void) { return s_strategicRegions != 0; }
+
+void GUI_3DS_StrategicSelecting(uint32 regions)
+{
+	s_strategicRegions = regions;
+	s_strategicArrowCount = 0;
+	s_strategicChosenRegion = 0;
+	s_strategicX = TOP_WIDTH / 2;
+	s_strategicY = 100;
+}
+
+void GUI_3DS_StrategicAddArrow(uint16 region, int16 x, int16 y)
+{
+	if (s_strategicArrowCount >= sizeof(s_strategicArrows) / sizeof(s_strategicArrows[0])) return;
+	s_strategicArrows[s_strategicArrowCount].region = region;
+	s_strategicArrows[s_strategicArrowCount].x = x;
+	s_strategicArrows[s_strategicArrowCount].y = y;
+	s_strategicArrowCount++;
+}
+
+void GUI_3DS_StrategicMoveCursor(int dx, int dy)
+{
+	/* Match the first and last pixels of the scaled playable map. */
+	const int left = (STRATEGIC_X * TOP_WIDTH + SCREEN_WIDTH - 1) / SCREEN_WIDTH;
+	const int right = ((STRATEGIC_X + STRATEGIC_W) * TOP_WIDTH - 1) / SCREEN_WIDTH;
+	const int top = (STRATEGIC_Y * TOP_HEIGHT + SCREEN_HEIGHT - 1) / SCREEN_HEIGHT;
+	const int bottom = ((STRATEGIC_Y + STRATEGIC_H) * TOP_HEIGHT - 1) / SCREEN_HEIGHT;
+	s_strategicX = clamp(s_strategicX + dx, left, right);
+	s_strategicY = clamp(s_strategicY + dy, top, bottom);
+}
+
+static uint16 StrategicHoveredRegion(void)
+{
+	if (!s_strategicRegions || !g_fileRgnclkCPS) return 0;
+	int x = s_strategicX * SCREEN_WIDTH / TOP_WIDTH;
+	int y = s_strategicY * SCREEN_HEIGHT / TOP_HEIGHT;
+	uint16 arrowRegion = 0;
+	int nearest = 16 * 16;
+	for (unsigned i = 0; i < s_strategicArrowCount; i++) {
+		int dx = x - s_strategicArrows[i].x;
+		int dy = y - s_strategicArrows[i].y;
+		if (dx < 0 || dx >= 16 || dy < 0 || dy >= 16) continue;
+		int distance = (dx - 8) * (dx - 8) + (dy - 8) * (dy - 8);
+		if (distance >= nearest) continue;
+		nearest = distance;
+		arrowRegion = s_strategicArrows[i].region;
 	}
+	if (arrowRegion != 0) return arrowRegion;
+
+	uint8 region = g_fileRgnclkCPS[(y - STRATEGIC_Y) * STRATEGIC_W + x - STRATEGIC_X];
+	return region > 0 && region < 32 && (s_strategicRegions & ((uint32)1 << region)) ? region : 0;
+}
+
+void GUI_3DS_StrategicConfirm(void)
+{
+	s_strategicChosenRegion = StrategicHoveredRegion();
+}
+
+uint16 GUI_3DS_StrategicTakeRegion(void)
+{
+	uint16 region = s_strategicChosenRegion;
+	s_strategicChosenRegion = 0;
+	return region;
+}
+
+void GUI_3DS_StrategicSetText(const char *text)
+{
+	memcpy(s_strategicPreviousText, s_strategicText, sizeof(s_strategicText));
+	snprintf(s_strategicText, sizeof(s_strategicText), "%s", text != NULL ? text : "");
+	s_strategicTextStep = 0;
+}
+
+void GUI_3DS_StrategicTextStep(int step)
+{
+	s_strategicTextStep = step;
+}
+
+static void StrategicTop(void)
+{
+	memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
+	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
+
+	/* Start below the title printed on the original map artwork. */
+	const uint8 *src = GFX_Screen_Get_ByIndex(SCREEN_0);
+	if (src != NULL) {
+		for (int y = 20; y < TOP_HEIGHT; y++) {
+			int sy = (y * 5) / 6;
+			const uint8 *srcRow = src + sy * SCREEN_WIDTH;
+			uint8 *dstRow = g_topScreenBuffer + y * TOP_WIDTH;
+			for (int x = 0; x < TOP_WIDTH; x++) {
+				int sx = (x * 4) / 5;
+				dstRow[x] = srcRow[sx];
+			}
+		}
+	}
+
+	if (GUI_3DS_StrategicIsSelecting()) {
+		GUI_3DS_DrawCursor(g_topScreenBuffer, TOP_WIDTH, s_strategicX, s_strategicY);
+	}
+}
+
+static void StrategicBottom(void)
+{
+	memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
+	memset(g_bottomScreenUIMask, 2, sizeof(g_bottomScreenUIMask));
+
+	const int cx = BOTTOM_WIDTH / 2;
+	if (GUI_3DS_StrategicIsSelecting()) {
+		Cairo_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, cx, 124,
+			L10N("SELECT YOUR NEXT MISSION", "PASIRINKITE KITĄ MISIJĄ"), 216, CAIRO_NO_SHADOW);
+		return;
+	}
+
+	/* Scroll the old sentence out and the new one in through the same window. */
+	enum { SUBTITLE_TOP = 88, SUBTITLE_BOTTOM = 152 };
+	int offset = (SUBTITLE_BOTTOM - SUBTITLE_TOP) * s_strategicTextStep / 13;
+	if (s_strategicTextStep < 13) GUI_3DS_DrawCenteredSubtitle(s_strategicPreviousText, 120 - offset);
+	GUI_3DS_DrawCenteredSubtitle(s_strategicText, 120 + SUBTITLE_BOTTOM - SUBTITLE_TOP - offset);
+	memset(g_bottomScreenBuffer, 0, SUBTITLE_TOP * BOTTOM_WIDTH);
+	memset(g_bottomScreenBuffer + SUBTITLE_BOTTOM * BOTTOM_WIDTH, 0,
+		(BOTTOM_HEIGHT - SUBTITLE_BOTTOM) * BOTTOM_WIDTH);
+}
+
+/* ---- In-game modal popup on top screen (Figma node 165:815) ---- */
+static void PopupPortrait(int x, int y, int width, int height, uint16 spriteID)
+{
+	uint8 *sprite = Sprite_GetByIndex(spriteID);
+	if (!sprite) return;
+	int sw = Sprite_GetWidth(sprite), sh = Sprite_GetHeight(sprite);
+	if (sw <= 0 || sw > 64 || sh <= 0 || sh > 64) return;
+	static uint8 saved[64 * 64];
+	uint8 *scratch = GFX_Screen_Get_ByIndex(SCREEN_2);
+	if (!scratch) return;
+	for (int row = 0; row < sh; row++) {
+		memcpy(saved + row * sw, scratch + row * 320, sw);
+		memset(scratch + row * 320, 0, sw);
+	}
+	GUI_DrawSprite(SCREEN_2, sprite, 0, 0, 0, 0);
+
+	int scale = min(width / sw, height / sh), dw, dh;
+	if (scale > 0) {
+		dw = sw * scale;
+		dh = sh * scale;
+	} else if (width * sh <= height * sw) {
+		dw = width;
+		dh = max(1, sh * width / sw);
+	} else {
+		dh = height;
+		dw = max(1, sw * height / sh);
+	}
+	int left = x + (width - dw) / 2, top = y + (height - dh) / 2;
+
+	/* Clear portrait box area with palette index 0 (black background) and mask 0 */
+	for (int r = 0; r < height; r++) {
+		int py = y + r;
+		if (py < 0 || py >= TOP_HEIGHT) continue;
+		for (int c = 0; c < width; c++) {
+			int px = x + c;
+			if (px < 0 || px >= TOP_WIDTH) continue;
+			int at = py * TOP_WIDTH + px;
+			g_topScreenBuffer[at] = 0;
+			g_topScreenUIMask[at] = 0;
+		}
+	}
+
+	/* Copy scaled sprite pixels */
+	for (int row = 0; row < dh; row++) {
+		int py = top + row;
+		if (py < 0 || py >= TOP_HEIGHT) continue;
+		for (int col = 0; col < dw; col++) {
+			int px = left + col;
+			if (px < 0 || px >= TOP_WIDTH) continue;
+			int at = py * TOP_WIDTH + px;
+			uint8 c = scratch[(row * sh / dh) * 320 + col * sw / dw];
+			g_topScreenBuffer[at] = c;
+			g_topScreenUIMask[at] = 0;
+		}
+	}
+	for (int row = 0; row < sh; row++) {
+		memcpy(scratch + row * SCREEN_WIDTH, saved + row * sw, sw);
+	}
+}
+
+static void GUI_3DS_DrawPopup(const char *text, uint16 spriteID)
+{
+	if (!g_topScreenBuffer) return;
+
+	int x0 = (TOP_WIDTH - POPUP_WIDTH) / 2;   /* 58 */
+	int y0 = (TOP_HEIGHT - POPUP_HEIGHT) / 2; /* 33 */
+	int x1 = x0 + POPUP_WIDTH - 1;            /* 341 */
+	int y1 = y0 + POPUP_HEIGHT - 1;           /* 205 */
+
+	/* 1. Main background fill with POPUP_UI_MASK */
+	for (int y = y0; y <= y1; y++) {
+		int row = y * TOP_WIDTH;
+		for (int x = x0; x <= x1; x++) {
+			g_topScreenBuffer[row + x] = POPUP_BG;
+			g_topScreenUIMask[row + x] = POPUP_UI_MASK;
+		}
+	}
+
+	/* 2. Outer bevel: 2px raised (Top/Left = WHITE, Bottom/Right = BORDER_DARK) */
+	for (int y = y0; y <= y0 + 1; y++) {
+		for (int x = x0; x <= x1 - 2; x++) g_topScreenBuffer[y * TOP_WIDTH + x] = POPUP_WHITE;
+	}
+	for (int y = y0; y <= y1 - 2; y++) {
+		for (int x = x0; x <= x0 + 1; x++) g_topScreenBuffer[y * TOP_WIDTH + x] = POPUP_WHITE;
+	}
+	for (int y = y1 - 1; y <= y1; y++) {
+		for (int x = x0 + 2; x <= x1; x++) g_topScreenBuffer[y * TOP_WIDTH + x] = POPUP_BORDER_DARK;
+	}
+	for (int y = y0 + 2; y <= y1; y++) {
+		for (int x = x1 - 1; x <= x1; x++) g_topScreenBuffer[y * TOP_WIDTH + x] = POPUP_BORDER_DARK;
+	}
+
+	/* 3. Inner bevel: 8px inset (2px outer + 6px gap), 2px recessed (Top/Left = BORDER_DARK, Bottom/Right = WHITE) */
+	int ix0 = x0 + 8; /* 66 */
+	int iy0 = y0 + 8; /* 41 */
+	int ix1 = x1 - 8; /* 333 */
+	int iy1 = y1 - 8; /* 197 */
+
+	for (int y = iy0; y <= iy0 + 1; y++) {
+		for (int x = ix0; x <= ix1 - 2; x++) g_topScreenBuffer[y * TOP_WIDTH + x] = POPUP_BORDER_DARK;
+	}
+	for (int y = iy0; y <= iy1 - 2; y++) {
+		for (int x = ix0; x <= ix0 + 1; x++) g_topScreenBuffer[y * TOP_WIDTH + x] = POPUP_BORDER_DARK;
+	}
+	for (int y = iy1 - 1; y <= iy1; y++) {
+		for (int x = ix0 + 2; x <= ix1; x++) g_topScreenBuffer[y * TOP_WIDTH + x] = POPUP_WHITE;
+	}
+	for (int y = iy0 + 2; y <= iy1; y++) {
+		for (int x = ix1 - 1; x <= ix1; x++) g_topScreenBuffer[y * TOP_WIDTH + x] = POPUP_WHITE;
+	}
+
+	/* 4. Building / Object picture box */
+	bool hasPortrait = Sprite_GetByIndex(spriteID) != NULL;
+	if (hasPortrait) {
+		int bw = 64, bh = 48;
+		int bx = (TOP_WIDTH - bw) / 2; /* 168 */
+		int by = 51;
+
+		/* 1px white border around the picture box */
+		for (int x = bx - 1; x <= bx + bw; x++) {
+			g_topScreenBuffer[(by - 1) * TOP_WIDTH + x] = POPUP_WHITE;
+			g_topScreenBuffer[(by + bh) * TOP_WIDTH + x] = POPUP_WHITE;
+		}
+		for (int y = by - 1; y <= by + bh; y++) {
+			g_topScreenBuffer[y * TOP_WIDTH + bx - 1] = POPUP_WHITE;
+			g_topScreenBuffer[y * TOP_WIDTH + bx + bw] = POPUP_WHITE;
+		}
+
+		PopupPortrait(bx, by, bw, bh, spriteID);
+	}
+
+	/* Reserve the bevel and shadow when measuring, and keep text below the portrait. */
+	enum { PADDING = 5, SHADOW = 1 };
+	const int textTop = hasPortrait ? 105 : iy0 + 2 + PADDING;
+	const int textWidth = ix1 - ix0 + 1 - 2 * (2 + PADDING) - SHADOW;
+	const int textBottom = iy1 - 1 - PADDING;
+	const int textHeight = textBottom - textTop;
+	char lines[8][128];
+	const char *wrapped[8];
+	const char *remaining;
+	int maxLines = 1 + (textHeight - CAIRO_GLYPH_H - SHADOW) / CAIRO_LINE_H;
+	int count = Cairo_WrapText(text, textWidth, lines, maxLines, &remaining);
+	if (count == 0) return;
+	if (*remaining) {
+		/* Keep the portrait and bevel fixed while the text rises in a clipped window. */
+		char line[1][128];
+		const int scrollWidth = textWidth - 8;
+		int totalLines = 0;
+		for (const char *p = text; *p; p = remaining) {
+			totalLines += Cairo_WrapText(p, scrollWidth, line, 1, &remaining);
+		}
+		int contentHeight = (totalLines - 1) * CAIRO_LINE_H + CAIRO_GLYPH_H + SHADOW;
+		int maxScroll = contentHeight - textHeight;
+		if (maxScroll > 0 && contentHeight > 0) {
+			uint32 elapsed = g_timerGUI - s_messageStartTick;
+			int scroll = elapsed > 120 ? min((elapsed - 120) / 4, (uint32)maxScroll) : 0;
+			int baseline = textTop + CAIRO_BASE_ROW - scroll;
+			for (const char *p = text; *p && baseline - CAIRO_BASE_ROW < textBottom; p = remaining) {
+				if (Cairo_WrapText(p, scrollWidth, line, 1, &remaining) == 0) break;
+				Cairo_DrawTextClipped(g_topScreenBuffer, TOP_WIDTH, TOP_WIDTH / 2 - 3, baseline,
+					line[0], -1, POPUP_WHITE, POPUP_BLACK, textTop, textBottom);
+				baseline += CAIRO_LINE_H;
+			}
+			int barX = ix1 - 7;
+			int thumbHeight = max(7, textHeight * textHeight / contentHeight);
+			int thumbY = textTop + scroll * (textHeight - thumbHeight) / maxScroll;
+			GUI_3DS_FillRect(g_topScreenBuffer, TOP_WIDTH, barX, textTop, barX + 2, textBottom - 1, POPUP_BORDER_DARK);
+			GUI_3DS_FillRect(g_topScreenBuffer, TOP_WIDTH, barX, thumbY, barX + 2, thumbY + thumbHeight - 1, POPUP_WHITE);
+			return;
+		}
+	}
+	for (int i = 0; i < count; i++) wrapped[i] = lines[i];
+	CairoBounds bounds = Cairo_BlockBounds(wrapped, count, CAIRO_LINE_H, true);
+	int baseline = textTop + (textHeight - 1 - bounds.top - bounds.bottom) / 2;
+	for (int i = 0; i < count; i++) {
+		Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, TOP_WIDTH / 2, baseline + i * CAIRO_LINE_H,
+			lines[i], POPUP_WHITE, POPUP_BLACK);
+	}
+}
+
+static void DrawMarkerRect(uint8 *buf, uint8 *mask, int stride, int x1, int y1, int x2, int y2, uint8 color)
+{
+	x1 = max(0, x1);
+	x2 = min(stride - 1, x2);
+	y1 = max(0, y1);
+	y2 = min(TOP_HEIGHT - 1, y2);
+	if (x1 > x2 || y1 > y2) return;
+	for (int y = y1; y <= y2; y++) {
+		memset(buf + y * stride + x1, color, x2 - x1 + 1);
+		memset(mask + y * stride + x1, TACTICAL_UI_MASK, x2 - x1 + 1);
+	}
+}
+
+static void DrawSelectionCorners(uint8 *buf, uint8 *mask, int stride,
+		int left, int top, int right, int bottom, int arm)
+{
+	for (int side = 0; side < 2; side++) {
+		int edgeY = side ? bottom : top;
+		int insideY = edgeY + (side ? -arm : arm);
+		DrawMarkerRect(buf, mask, stride, left, edgeY, left + arm, edgeY, TC_WHITE);
+		DrawMarkerRect(buf, mask, stride, right - arm, edgeY, right, edgeY, TC_WHITE);
+		DrawMarkerRect(buf, mask, stride, left, min(edgeY, insideY), left, max(edgeY, insideY), TC_WHITE);
+		DrawMarkerRect(buf, mask, stride, right, min(edgeY, insideY), right, max(edgeY, insideY), TC_WHITE);
+	}
+}
+
+static void DrawUnitMarker(const Unit *unit, int x, int y)
+{
+	const UnitInfo *info = &g_table_unitInfo[unit->o.type];
+	int radius = info->movementType == MOVEMENT_FOOT ? 9 : 13;
+	int left = x - radius, right = x + radius;
+	int top = y - radius, bottom = y + radius;
+	DrawSelectionCorners(g_topScreenBuffer, g_topScreenUIMask, TOP_WIDTH, left, top, right, bottom, 4);
+	if (unit->o.houseID != g_playerHouseID) return;
+	int maxHP = info->o.hitpoints;
+	int hp = min(unit->o.hitpoints, maxHP);
+	int width = right - left - 1;
+	int fill = maxHP ? hp * width / maxHP : 0;
+	uint8 color = hp <= maxHP / 4 ? TC_RED : hp <= maxHP / 2 ? TC_YELLOW : TC_GREEN;
+	DrawMarkerRect(g_topScreenBuffer, g_topScreenUIMask, TOP_WIDTH, left, top - 6, right, top - 2, TC_BLACK);
+	if (fill > 0) DrawMarkerRect(g_topScreenBuffer, g_topScreenUIMask, TOP_WIDTH, left + 1, top - 5, left + fill, top - 3, color);
 }
 
 void GUI_3DS_RenderTopScreen(void)
 {
 	if (g_topScreenBuffer == NULL || s_launchActive) return;
+	if (s_strategicActive) { StrategicTop(); return; }
  if(g_3dsModalMessageActive) {
   memcpy(g_topScreenBuffer,s_messageTop,sizeof(s_messageTop));
-  memcpy(g_topScreenUIMask,s_messageTopMask,sizeof(s_messageTopMask)); return;
+  memcpy(g_topScreenUIMask,s_messageTopMask,sizeof(s_messageTopMask));
+  GUI_3DS_DrawPopup(s_messageText, s_messageSpriteID);
+  return;
  }
  if(s_resultsActive && !CustomDialog()) {
   memset(g_topScreenBuffer,0,400*240); memset(g_topScreenUIMask,0,sizeof(g_topScreenUIMask));
@@ -1577,9 +2217,9 @@ void GUI_3DS_RenderTopScreen(void)
 			"The brutal House of\nGiedi Prime.\n\nCommands crushing\nheavy armor, Devastator\ntanks, and apocalyptic\nDeath Hand missiles."
 		};
 		static const char *houseDescLT[3] = {
-			"Kilminga Kaladano\ngimine.\n\nStipri aviacija\n(Ornitopteriai), garso\ntankai ir elitiniai\nFremenu kariai.",
-			"Turtingas Sigma\nDraconis kartelis.\n\nGreiti Raider triraciai,\nsabotazistai ir Deviator\ntankai, uzvaldantys\nprieso karius.",
-			"Ziauri Giedi Prime\ngimine.\n\nGalinga sarvuota\ntechnika, Devastator\ntankai ir Mirties\nRankos raketos."
+			"Kilminga Kaladano\ngiminė.\n\nStipri aviacija\n(Ornitopteriai), garso\ntankai ir narsūs\nFremenų kariai.",
+			"Turtingas Sigma\nDraconis kartelis.\n\nGreiti triračiai,\nsabotažistai ir\nNukreipėjai, perimantys\npriešo techniką.",
+			"Žiauri Giedi Prime\ngiminė.\n\nSunkiai šarvuota\ntechnika, Niokotojai\nir atominės Mirties\nRankos raketos."
 		};
 
 		GUI_3DS_DrawIntroFontText(g_topScreenBuffer, TOP_WIDTH, 198, 74, houseNames[focus], 119, 112);
@@ -1673,9 +2313,8 @@ void GUI_3DS_RenderTopScreen(void)
 				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 198, 108, missionLine, 15);
 				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 198, 128, s_saveSlots[slot].dateStr, 110);
 			} else if (slot >= 0 && slot < 5) {
-				const char *emptyStr = L10N("Empty Slot", "Tuscia vieta");
-				int ew = (int)strlen(emptyStr) * 8;
-				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, (TOP_WIDTH - ew) / 2, 116, emptyStr, 110);
+				const char *emptyStr = L10N("Empty Slot", "Tuščia vieta");
+				Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, TOP_WIDTH / 2, 124, emptyStr, 110, 0);
 			}
 			return;
 		}
@@ -1692,7 +2331,7 @@ void GUI_3DS_RenderTopScreen(void)
 				for (int x = 0; x < TOP_WIDTH; x++) dp[x] = (((x + y) & 1) != 0) ? 0 : sp[x];
 			}
 			if ((g_timerGUI % 60) < 40) {
-				const char *pauseStr = L10N("PAUSED", "PAUZE");
+				const char *pauseStr = L10N("PAUSED", "PAUZĖ");
 				int pw = GUI_3DS_GetIntroFontWidth(pauseStr);
 				int px = max(0, (TOP_WIDTH - pw) / 2);
 				int py = 104;
@@ -1738,34 +2377,32 @@ void GUI_3DS_RenderTopScreen(void)
 			}
 			lastSrcY = srcY;
 			const uint8 *srcRow = src + srcY * SCREEN_WIDTH;
-			uint8 *d = dstRow;
+			uint32 *d32 = (uint32 *)dstRow;
 			const uint8 *s = srcRow;
-			for (int block = 0; block < 80; block++) {
-				uint8 s0 = s[0], s1 = s[1], s2 = s[2];
-				d[0] = s0;
-				d[1] = s0;
-				d[2] = s1;
-				d[3] = s1;
-				d[4] = s2;
-				s += 3;
-				d += 5;
+			for (int block = 0; block < 20; block++) {
+				uint32 s0 = s[0], s1 = s[1], s2 = s[2], s3 = s[3];
+				uint32 s4 = s[4], s5 = s[5], s6 = s[6], s7 = s[7];
+				uint32 s8 = s[8], s9 = s[9], s10 = s[10], s11 = s[11];
+				d32[0] = s0 | (s0 << 8) | (s1 << 16) | (s1 << 24);
+				d32[1] = s2 | (s3 << 8) | (s3 << 16) | (s4 << 24);
+				d32[2] = s4 | (s5 << 8) | (s6 << 16) | (s6 << 24);
+				d32[3] = s7 | (s7 << 8) | (s8 << 16) | (s9 << 24);
+				d32[4] = s9 | (s10 << 8) | (s10 << 16) | (s11 << 24);
+				s += 12;
+				d32 += 5;
 			}
 		}
 	} else {
 		memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
 	}
 
-	/* Draw multi-selection brackets on selected units */
-	if (g_selectedUnitsCount > 1) {
-		for (uint16 i = 0; i < g_selectedUnitsCount; i++) {
-			Unit *u = g_selectedUnits[i];
-			if (u == NULL || !u->o.flags.s.allocated || u->o.flags.s.isNotOnMap) continue;
-
-			int16 sx, sy;
-			if (GUI_3DS_MapPosToScreenPos(u->o.position, &sx, &sy)) {
-				GUI_3DS_DrawRect(g_topScreenBuffer, TOP_WIDTH, sx - 10, sy - 10, sx + 10, sy + 10, 15);
-			}
-		}
+	int count = g_selectedUnitsCount ? g_selectedUnitsCount : 1;
+	for (int i = 0; i < count; i++) {
+		Unit *u = g_selectedUnitsCount ? g_selectedUnits[i] : g_unitSelected;
+		if (!u || !u->o.flags.s.allocated || u->o.flags.s.isNotOnMap || u->o.type >= UNIT_MAX) continue;
+		if (u->o.houseID != g_playerHouseID && (u->o.seenByHouses & (1 << g_playerHouseID)) == 0 && !g_debugScenario) continue;
+		int16 sx, sy;
+		if (GUI_3DS_MapPosToScreenPos(u->o.position, &sx, &sy)) DrawUnitMarker(u, sx, sy);
 	}
 
 	/* Draw Active Box Selection */
@@ -1779,6 +2416,23 @@ void GUI_3DS_RenderTopScreen(void)
 		GUI_3DS_DrawRect(g_topScreenBuffer, TOP_WIDTH, x1 + 1, y1 + 1, x2 - 1, y2 - 1, 254); /* White inner line */
 	}
 
+	if (s_toastText[0] != '\0') {
+		if ((int32)(s_toastUntilTick - g_timerGUI) > 0) {
+			if (!g_3dsModalMessageActive) {
+				const int w = 216, h = 24;
+				const int x0 = (TOP_WIDTH - w) / 2, y0 = 10;
+				GUI_3DS_FillRect(g_topScreenBuffer, TOP_WIDTH, x0, y0, x0 + w - 1, y0 + h - 1, 0);
+				GUI_3DS_DrawRect(g_topScreenBuffer, TOP_WIDTH, x0, y0, x0 + w - 1, y0 + h - 1, 27);
+				for (int py = y0; py < y0 + h; py++) {
+					memset(g_topScreenUIMask + py * TOP_WIDTH + x0, 2, w);
+				}
+				Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, TOP_WIDTH / 2, y0 + 16, s_toastText, 216, CAIRO_NO_SHADOW);
+			}
+		} else {
+			s_toastText[0] = '\0';
+		}
+	}
+
 	/* Draw Cursor (hidden during modal dialog message) */
 	if (!g_3dsModalMessageActive) {
 		int16 cx = g_cursor3DS_X;
@@ -1789,16 +2443,19 @@ void GUI_3DS_RenderTopScreen(void)
 
 		if (scrollX != 0 || scrollY != 0) {
 			GUI_3DS_DrawScrollCursor(g_topScreenBuffer, TOP_WIDTH, cx, cy, scrollX, scrollY);
-		} else if (g_selectionType == SELECTIONTYPE_TARGET) {
-			for (int i = 2; i <= 7; i++) {
-				GUI_3DS_PutPixel(g_topScreenBuffer, TOP_WIDTH, cx - i, cy, 254);
-				GUI_3DS_PutPixel(g_topScreenBuffer, TOP_WIDTH, cx + i, cy, 254);
-				GUI_3DS_PutPixel(g_topScreenBuffer, TOP_WIDTH, cx, cy - i, 254);
-				GUI_3DS_PutPixel(g_topScreenBuffer, TOP_WIDTH, cx, cy + i, 254);
-			}
-			GUI_3DS_PutPixel(g_topScreenBuffer, TOP_WIDTH, cx, cy, 224);
 		} else {
-			GUI_3DS_DrawCursor(g_topScreenBuffer, TOP_WIDTH, cx, cy);
+			bool isBoxDragging = g_boxSelectActive && (abs(g_boxSelectCurrX - g_boxSelectStartX) >= 4 || abs(g_boxSelectCurrY - g_boxSelectStartY) >= 4);
+			bool hasFriendlyUnitSelected = (g_selectedUnitsCount > 0) ||
+			    (g_unitSelected != NULL && g_unitSelected->o.flags.s.allocated && !g_unitSelected->o.flags.s.isNotOnMap && g_unitSelected->o.houseID == g_playerHouseID);
+			bool showTargetCursor = !GUI_3DS_IsMenuOrDialogActive() && !GUI_3DS_CustomMenuActive() &&
+			    g_selectionType != SELECTIONTYPE_PLACE && !isBoxDragging &&
+			    (g_selectionType == SELECTIONTYPE_TARGET || hasFriendlyUnitSelected);
+			if (showTargetCursor) {
+				uint8 ringColor = (CursorOverEnemy(cx, cy) || (g_selectionType == SELECTIONTYPE_TARGET && g_unitHouseMissile != NULL)) ? 8 : 254;
+				GUI_3DS_DrawTargetCursor(g_topScreenBuffer, TOP_WIDTH, cx, cy, ringColor);
+			} else {
+				GUI_3DS_DrawCursor(g_topScreenBuffer, TOP_WIDTH, cx, cy);
+			}
 		}
 	}
 }
@@ -1807,16 +2464,16 @@ static const char *GUI_3DS_GetActionLabel(uint16 action)
 {
 	switch (action) {
 		case ACTION_ATTACK:     return L10N("ATTACK", "PULTI");
-		case ACTION_MOVE:       return L10N("MOVE", "JUDETI");
-		case ACTION_RETREAT:    return L10N("RETREAT", "ATSIKR.");
+		case ACTION_MOVE:       return L10N("MOVE", "JUDĖTI");
+		case ACTION_RETREAT:    return L10N("RETREAT", "ATSITR.");
 		case ACTION_GUARD:      return L10N("GUARD", "SAUGOTI");
 		case ACTION_AREA_GUARD: return L10N("AREA GRD", "GINYBA");
 		case ACTION_HARVEST:    return L10N("HARVEST", "RINKTI");
-		case ACTION_RETURN:     return L10N("RETURN", "GRIZTI");
+		case ACTION_RETURN:     return L10N("RETURN", "GRĮŽTI");
 		case ACTION_STOP:       return L10N("STOP", "STOP");
 		case ACTION_AMBUSH:     return L10N("AMBUSH", "PASALA");
-		case ACTION_SABOTAGE:   return L10N("SABOTAGE", "SABOTAZ.");
-		case ACTION_DEPLOY:     return L10N("DEPLOY", "IKURTI");
+		case ACTION_SABOTAGE:   return L10N("SABOTAGE", "SABOTAŽ.");
+		case ACTION_DEPLOY:     return L10N("DEPLOY", "ĮKURTI");
 		case ACTION_DESTRUCT:   return L10N("DESTRUCT", "SPROGTI");
 		default:                return L10N("ORDERS", "VEIKSMAS");
 	}
@@ -1851,59 +2508,9 @@ static void BattleText(int cx, int y, const char *text, const Font *font, uint8 
 	Tiny5_DrawText(g_bottomScreenBuffer, 320, cx, y + 8, text, color, shadow);
 }
 
-static int BattleTextWidth(const char *text, const Font *font)
-{
-	font = g_fontNew8p ? g_fontNew8p : font;
-	int width = 0;
-	for (const unsigned char *p = (const unsigned char *)text; *p; p++)
-		width += font && *p < font->count ? max(1, font->chars[*p].width - 1) : 8;
-	return width;
-}
-
-static __attribute__((unused)) void BattleLabelText(int cx, int y, const char *text, int scale, uint8 color)
-{
-	const Font *font = g_fontNew8p;
-	if (!font) { BattleText(cx, y, text, NULL, color, true); return; }
-	int left = cx - BattleTextWidth(text, font) * scale / 512;
-	int advance = 0;
-	for (int pass = 0; pass < 2; pass++) {
-		advance = 0;
-		for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
-			if (*p >= font->count) { advance += 8; continue; }
-			const FontChar *ch = &font->chars[*p];
-			if (ch->data) for (int row = 0; row < ch->usedLines; row++) for (int col = 0; col < ch->width; col++) {
-				if (ch->data[row * ch->width + col] != 1) continue;
-				int x0 = left + (advance + col) * scale / 256 + (pass == 0);
-				int x1 = left + (advance + col + 1) * scale / 256 - 1 + (pass == 0);
-				int y0 = y + (ch->unusedLines + row) * scale / 256 + (pass == 0);
-				int y1 = y + (ch->unusedLines + row + 1) * scale / 256 - 1 + (pass == 0);
-				for (int py = max(41, y0); py <= min(237, y1); py++) for (int px = max(185, x0); px <= min(315, x1); px++)
-					GUI_3DS_PutPixel(g_bottomScreenBuffer, 320, px, py, pass == 0 ? TC_BLACK : color);
-			}
-			advance += max(1, ch->width - 1);
-		}
-	}
-}
-
 static void BattleButtonLabel(int x,int y,int w,int h,const char *label,uint8 color)
 {
- if(!label || !*label) return;
- char lines[2][48]; const char *split=strchr(label,'\n');
- int count=split ? 2 : 1;
- snprintf(lines[0],sizeof(lines[0]),"%.*s",split ? (int)(split-label) : (int)strlen(label),label);
- if(split) snprintf(lines[1],sizeof(lines[1]),"%s",split+1);
-
- if(count==1) {
-  int top=y+(h-10)/2;
-  int baseY=top+8;
-  Tiny5_DrawText(g_bottomScreenBuffer,320,x+w/2,baseY,lines[0],color,true);
- } else {
-  int top=y+(h-26)/2;
-  int baseY0=top+8;
-  int baseY1=top+16+8;
-  Tiny5_DrawText(g_bottomScreenBuffer,320,x+w/2,baseY0,lines[0],color,true);
-  Tiny5_DrawText(g_bottomScreenBuffer,320,x+w/2,baseY1,lines[1],color,true);
- }
+    ButtonLabelText(x, y, w, h, label, color, (color == TC_DISABLED || color == TC_SHADOW) ? CAIRO_NO_SHADOW : TC_BLACK);
 }
 
 static void BattleButton(int x,int y,int w,int h,const char *label,bool active,bool dim)
@@ -1920,29 +2527,96 @@ static void BattleButton(int x,int y,int w,int h,const char *label,bool active,b
     memset(g_bottomScreenUIMask + py * 320 + max(0, x - 2), TACTICAL_UI_MASK, min(320, x + w + 2) - max(0, x - 2));
   }
   const char *shown=label ? label : "";
-  BattleButtonLabel(x,y,w,h,shown,dim ? TC_SHADOW : active ? TC_ACTIVE : TC_WHITE);
+  BattleButtonLabel(x,y,w,h,shown,dim ? TC_DISABLED : active ? TC_ACTIVE : TC_WHITE);
 }
 
 /* Fit original art into its Figma slot, using integer scaling whenever possible. */
-static void BattlePortrait(int x,int y,int width,int height,uint16 spriteID)
+static void BattlePortrait(int x,int y,int width,int height,uint16 spriteID, int trim)
 {
+	typedef struct PortraitCacheEntry {
+		uint8 pixels[53 * 69];
+		const uint8 *sprite;
+		uint16 spriteID;
+		int width;
+		int height;
+		int trim;
+		int dw;
+		int dh;
+	} PortraitCacheEntry;
+	static PortraitCacheEntry s_portraitCache[16];
+
 	uint8 *sprite = g_sprites[spriteID]; if (!sprite) return;
+	PortraitCacheEntry *entry = &s_portraitCache[((unsigned)spriteID ^ (unsigned)width ^ (unsigned)(trim << 4)) & 15];
+	if (width <= 69 && height <= 53 && entry->sprite == sprite && entry->spriteID == spriteID &&
+	    entry->width == width && entry->height == height && entry->trim == trim) {
+		int left = x + (width - entry->dw) / 2, top = y + (height - entry->dh) / 2;
+		GUI_3DS_FillRect(g_bottomScreenBuffer, 320, x, y, x + width - 1, y + height - 1, TC_FACE);
+		for (int row = 0; row < entry->dh; row++) {
+			memcpy(g_bottomScreenBuffer + (top + row) * 320 + left, entry->pixels + row * entry->dw, entry->dw);
+			memset(g_bottomScreenUIMask + (top + row) * 320 + left, 0, entry->dw);
+		}
+		return;
+	}
 	int sw = Sprite_GetWidth(sprite), sh = Sprite_GetHeight(sprite);
-	if (sw <= 0 || sw > 64 || sh <= 0 || sh > 64) return;
+	if (sw <= trim * 2 || sw > 64 || sh <= trim * 2 || sh > 64) return;
 	static uint8 saved[64*64]; uint8 *scratch = GFX_Screen_Get_ByIndex(SCREEN_2); if (!scratch) return;
 	for (int row = 0; row < sh; row++) { memcpy(saved + row * sw, scratch + row * 320, sw); memset(scratch + row * 320, 0, sw); }
 	GUI_DrawSprite(SCREEN_2, sprite, 0, 0, 0, 0);
-	int scale = min(width / sw, height / sh), dw, dh;
-	if (scale > 0) { dw = sw * scale; dh = sh * scale; }
-	else if (width * sh <= height * sw) { dw = width; dh = max(1, sh * width / sw); }
-	else { dh = height; dw = max(1, sw * height / sh); }
+	int artWidth = sw - trim * 2, artHeight = sh - trim * 2;
+	int scale = min(width / artWidth, height / artHeight), dw, dh;
+	if (scale > 0) { dw = artWidth * scale; dh = artHeight * scale; }
+	else if (width * artHeight <= height * artWidth) { dw = width; dh = max(1, artHeight * width / artWidth); }
+	else { dh = height; dw = max(1, artWidth * height / artHeight); }
+	if (dw > 320) return;
 	int left = x + (width - dw) / 2, top = y + (height - dh) / 2;
+	int srcCol[320];
+	for (int col = 0; col < dw; col++) srcCol[col] = trim + col * artWidth / dw;
 	GUI_3DS_FillRect(g_bottomScreenBuffer, 320, x, y, x + width - 1, y + height - 1, TC_FACE);
-	for (int row = 0; row < dh; row++) for (int col = 0; col < dw; col++) {
-		int at = (top + row) * 320 + left + col;
-		g_bottomScreenBuffer[at] = scratch[(row * sh / dh) * 320 + col * sw / dw]; g_bottomScreenUIMask[at] = 0;
+	bool cacheable = (width <= 69 && height <= 53 && dw <= 69 && dh <= 53);
+	for (int row = 0; row < dh; row++) {
+		const uint8 *srcRow = scratch + (trim + row * artHeight / dh) * 320;
+		uint8 *dstRow = g_bottomScreenBuffer + (top + row) * 320 + left;
+		for (int col = 0; col < dw; col++) dstRow[col] = srcRow[srcCol[col]];
+		memset(g_bottomScreenUIMask + (top + row) * 320 + left, 0, dw);
+		if (cacheable) memcpy(entry->pixels + row * dw, dstRow, dw);
+	}
+	if (cacheable) {
+		entry->sprite = sprite;
+		entry->spriteID = spriteID;
+		entry->width = width;
+		entry->height = height;
+		entry->trim = trim;
+		entry->dw = dw;
+		entry->dh = dh;
 	}
 	for (int row = 0; row < sh; row++) memcpy(scratch + row * 320, saved + row * sw, sw);
+}
+
+static void BattleSpecialWeaponPortrait(int x, int y, int width, int height, uint8 specialWeapon)
+{
+	uint8 idx = 0xFF;
+	uint16 fallbackSprite = g_table_structureInfo[STRUCTURE_PALACE].o.spriteID;
+	switch (specialWeapon) {
+		case HOUSE_WEAPON_MISSILE:  idx = 0; fallbackSprite = 0x1E; break;
+		case HOUSE_WEAPON_FREMEN:   idx = 1; fallbackSprite = 0x5E; break;
+		case HOUSE_WEAPON_SABOTEUR: idx = 2; fallbackSprite = 0x60; break;
+		default: break;
+	}
+	if (idx < 3 && (s_specialPortraitMask & (1u << idx)) != 0) {
+		int dw = width;
+		int dh = max(1, min(height, width * 42 / 69));
+		int left = x + (width - dw) / 2;
+		int top = y + (height - dh) / 2;
+		GUI_3DS_FillRect(g_bottomScreenBuffer, 320, x, y, x + width - 1, y + height - 1, TC_FACE);
+		for (int row = 0; row < dh; row++) {
+			const uint8 *srcRow = s_specialPortraits[idx] + (row * 42 / dh) * 69;
+			uint8 *dstRow = g_bottomScreenBuffer + (top + row) * 320 + left;
+			for (int col = 0; col < dw; col++) dstRow[col] = srcRow[col * 69 / dw];
+			memset(g_bottomScreenUIMask + (top + row) * 320 + left, 0, dw);
+		}
+		return;
+	}
+	BattlePortrait(x, y, width, height, fallbackSprite, 0);
 }
 
 static void PanelMeterBar(int x,int y,int w,int h,uint32 val,uint32 maxVal,const char *caption,int captionY,uint8 captionColor)
@@ -1968,21 +2642,55 @@ static void PanelMeterBar(int x,int y,int w,int h,uint32 val,uint32 maxVal,const
 
 static void PanelDamageBar(int x,int y,int w,int h,uint32 hp,uint32 maxHP)
 {
- PanelMeterBar(x,y,w,h,hp,maxHP,"DMG",104,TC_TEXT);
+ PanelMeterBar(x,y,w,h,hp,maxHP,L10N("DMG","BŪKLĖ"),104,TC_TEXT);
 }
 
-static void PanelHeader(const char *title,uint16 spriteID,bool isUnit)
+static void PanelDrawTitle(const char *title)
 {
- VARIABLE_NOT_USED(isUnit);
- char upper[48]; int i=0;
- for(;title && title[i] && i<(int)sizeof(upper)-1;i++) {
-  unsigned char c=(unsigned char)title[i];
-  upper[i]=(c>='a' && c<='z') ? (c-'a'+'A') : c;
- }
- upper[i]='\0';
- Tiny5_DrawText(g_bottomScreenBuffer,320,245,54,upper,TC_TEXT,false);
- BattlePortrait(178,61,69,53,spriteID);
- PanelAddHit(176,59,73,55,HIT_PORTRAIT,0);
+	char upper[48]; size_t out = 0;
+	for (size_t i = 0; title && title[i] && out + 2 < sizeof(upper); ) {
+		unsigned char c = (unsigned char)title[i];
+		if (c == 0xC4 || c == 0xC5) {
+			unsigned char next = (unsigned char)title[i + 1];
+			if (!next) break;
+			/* Odd low-bit in Lithuanian UTF-8 0xC4/0xC5 block is lowercase -> clear bit 0 for uppercase, except ė/ų/ū. */
+			if (c == 0xC4 && (next == 0x85 || next == 0x8D || next == 0x97 || next == 0x99 || next == 0xAF)) next--;
+			else if (c == 0xC5 && (next == 0xA1 || next == 0xAB || next == 0xB3 || next == 0xBE)) next--;
+			upper[out++] = (char)c;
+			upper[out++] = (char)next;
+			i += 2;
+		} else {
+			upper[out++] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : (char)c;
+			i++;
+		}
+	}
+	upper[out] = '\0';
+	Tiny5_DrawText(g_bottomScreenBuffer, 320, 245, 54, upper, TC_TEXT, false);
+}
+
+static void PanelHeaderAt(const char *title, uint16 spriteID, int portraitX)
+{
+	PanelDrawTitle(title);
+	BattlePortrait(portraitX, 61, 69, 53, spriteID, 0);
+	PanelAddHit(portraitX - 2, 59, 73, 55, HIT_PORTRAIT, 0);
+}
+
+static void PanelHeader(const char *title, uint16 spriteID, bool isUnit)
+{
+	VARIABLE_NOT_USED(isUnit);
+	PanelHeaderAt(title, spriteID, 178);
+}
+
+static void PanelHeaderCentered(const char *title, uint16 spriteID)
+{
+	PanelHeaderAt(title, spriteID, 210);
+}
+
+static void PanelHeaderSpecial(const char *title, uint8 specialWeapon)
+{
+	PanelDrawTitle(title);
+	BattleSpecialWeaponPortrait(178, 61, 69, 53, specialWeapon);
+	PanelAddHit(176, 59, 73, 55, HIT_PORTRAIT, 0);
 }
 
 static const char *PanelActionKey(uint16 action)
@@ -2003,16 +2711,19 @@ static const char *PanelActionKey(uint16 action)
 
 static void BattleProgress(int pct)
 {
- int filled=clamp(pct*9/100,0,9);
- for(int row=0;row<3;row++) for(int col=0;col<3;col++) {
-  int x=256+col*15,y=152+row*15;
-  GUI_3DS_PutPixel(g_bottomScreenBuffer,320,x,y,TC_DOT);
-  for(int d=5;d<=10;d+=5) { GUI_3DS_PutPixel(g_bottomScreenBuffer,320,x+d,y,TC_DOT); GUI_3DS_PutPixel(g_bottomScreenBuffer,320,x,y+d,TC_DOT); }
-  if(row*3+col<filled) {
-   GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+2,x+12,y+12,TC_SHADOW);
-   GUI_3DS_DrawBevel(g_bottomScreenBuffer,320,x+2,y+2,x+12,y+12,TC_DOT,TC_TEXT);
-  }
- }
+	enum { X = 256, Y = 152, STEP = 15, CELLS = 3, DOT_STEP = 5 };
+	int filled = clamp(pct * 9 / 100, 0, 9);
+	for (int line = 0; line <= CELLS; line++) {
+		for (int d = 0; d <= STEP * CELLS; d += DOT_STEP) {
+			GUI_3DS_PutPixel(g_bottomScreenBuffer, BOTTOM_WIDTH, X + d, Y + line * STEP, TC_DOT);
+			GUI_3DS_PutPixel(g_bottomScreenBuffer, BOTTOM_WIDTH, X + line * STEP, Y + d, TC_DOT);
+		}
+	}
+	for (int cell = 0; cell < filled; cell++) {
+		int x = X + (cell % CELLS) * STEP, y = Y + (cell / CELLS) * STEP;
+		GUI_3DS_FillRect(g_bottomScreenBuffer, BOTTOM_WIDTH, x + 1, y + 1, x + STEP - 1, y + STEP - 1, TC_SHADOW);
+		GUI_3DS_DrawBevel(g_bottomScreenBuffer, BOTTOM_WIDTH, x + 1, y + 1, x + STEP - 1, y + STEP - 1, TC_DOT, TC_TEXT);
+	}
 }
 
 static void PanelStructureStatusBox(Structure *s,const StructureInfo *si)
@@ -2021,7 +2732,7 @@ static void PanelStructureStatusBox(Structure *s,const StructureInfo *si)
  bool mine=s->o.houseID==g_playerHouseID;
  bool ready=s->o.type==STRUCTURE_CONSTRUCTION_YARD && s->o.linkedID!=STRUCTURE_INVALID && s->countDown==0;
  bool building=info->flags.factory && s->o.linkedID!=STRUCTURE_INVALID;
- char label[48],pctLabel[16];
+ char label[48];
  uint16 sprite=info->spriteID,buildTime=0;
  if(info->flags.factory) {
   if(s->o.type==STRUCTURE_CONSTRUCTION_YARD && s->objectType<STRUCTURE_MAX) {
@@ -2032,23 +2743,29 @@ static void PanelStructureStatusBox(Structure *s,const StructureInfo *si)
  }
  int total=(int)buildTime<<8;
  int pct=ready ? 100 : building && total ? clamp((total-(int)s->countDown)*100/total,0,99) : 0;
+ bool palaceReady = false;
  if(s->o.flags.s.upgrading) pct=clamp(100-(int)s->upgradeTimeLeft,0,100);
+ else if(s->o.type==STRUCTURE_PALACE) {
+  uint16 maxCD=s->o.houseID<HOUSE_MAX ? g_table_houseInfo[s->o.houseID].specialCountDown : 0;
+  palaceReady=(mine && s->countDown==0 && g_unitHouseMissile==NULL);
+  pct=(s->countDown==0 && !(mine && g_unitHouseMissile!=NULL)) ? 100 : (maxCD ? clamp(((int)maxCD-(int)s->countDown)*100/(int)maxCD,0,99) : 0);
+ }
  const char *action = (s->o.type == STRUCTURE_CONSTRUCTION_YARD) ? L10N("BUILD IT (Y)", "STATYTI (Y)") : L10N("BUILD IT (Y)", "GAMINTI (Y)");
- if(!mine) action=L10N("ENEMY","PRIESAS");
+ if(!mine) action=L10N("ENEMY","PRIEŠAS");
  else if(ready) action=L10N("PLACE IT (Y)","STATYTI (Y)");
- else if(building) action=L10N("CANCEL (L+Y)","ATSAUKTI (L+Y)");
- else if(s->o.type==STRUCTURE_STARPORT) action=L10N("ORDER (Y)","UZSAKYTI (Y)");
- else if(s->o.type==STRUCTURE_PALACE) action=s->countDown ? L10N("CHARGING","KRAUNASI") : L10N("LAUNCH (Y)","PALEISTI (Y)");
+ else if(building) action=L10N("CANCEL (L+Y)","ATŠAUKTI (L+Y)");
+ else if(s->o.type==STRUCTURE_STARPORT) action=L10N("ORDER (Y)","UŽSAKYTI (Y)");
+ else if(s->o.type==STRUCTURE_PALACE) action=(g_unitHouseMissile!=NULL) ? L10N("AIMING","TAIKOMASI") : (s->countDown ? L10N("CHARGING","KRAUNASI") : L10N("LAUNCH (Y)","PALEISTI (Y)"));
  else if(!info->flags.factory) action=L10N("SELECT ALL (X)","VISI KARIAI (X)");
  snprintf(label,sizeof(label),"%s",action);
 	BattleButton(174, 146, 142, 76, "", false, false);
-	BattlePortrait(180, 150, 66, 51, sprite);
-	BattleProgress(pct);
-	if (building || s->o.flags.s.upgrading) {
-		snprintf(pctLabel, sizeof(pctLabel), s->o.flags.s.onHold ? "HOLD" : "%d%%", pct);
-		BattleText(278, 194, pctLabel, g_fontNew6p, TC_TEXT, false);
+	if (s->o.type == STRUCTURE_PALACE && s->o.houseID < HOUSE_MAX) {
+		BattleSpecialWeaponPortrait(180, 150, 66, 51, g_table_houseInfo[s->o.houseID].specialWeapon);
+	} else {
+		BattlePortrait(180, 150, 66, 51, sprite, 0);
 	}
-	BattleButtonLabel(174, 200, 142, 22, label, (building && s->o.flags.s.onHold) ? TC_SHADOW : ready ? TC_ACTIVE : TC_WHITE);
+	BattleProgress(pct);
+	BattleButtonLabel(174, 198, 142, 24, label, (building && s->o.flags.s.onHold) ? TC_DISABLED : (ready || palaceReady) ? TC_ACTIVE : TC_WHITE);
 	if (mine) {
 		if (info->flags.factory && s->o.type != STRUCTURE_STARPORT) {
 			PanelAddHit(174, 146, 142, 52, HIT_OPEN_FACTORY, 0);
@@ -2072,15 +2789,16 @@ static bool DrawSquadPanel(void)
  int visible=count>12 ? 11 : count;
  for(int i=0;i<min(count,12);i++) {
   int x=177+(i%3)*46, y=60+(i/3)*41;
-  GUI_3DS_FillRect(g_bottomScreenBuffer,320,x,y,x+43,y+38,TC_BLACK);
   if(i>=visible) {
    char more[16]; snprintf(more,sizeof(more),"+%d",count-visible);
-   GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+2,x+41,y+36,TC_FACE);
    BattleText(x+22,y+13,more,g_fontNew8p,TC_TEXT,false);
    continue;
   }
   Unit *u=units[i];
-  BattlePortrait(x+2,y+2,40,28,g_table_unitInfo[u->o.type].o.spriteID);
+  /* Skip the white frame baked into the original portrait. */
+  BattlePortrait(x+2,y+2,40,28,g_table_unitInfo[u->o.type].o.spriteID,1);
+  DrawSelectionCorners(g_bottomScreenBuffer, g_bottomScreenUIMask, BOTTOM_WIDTH,
+    x+1, y+1, x+42, y+30, 6);
   uint32 maxHP=g_table_unitInfo[u->o.type].o.hitpoints;
   uint8 color=u->o.hitpoints<=maxHP/4 ? TC_RED : u->o.hitpoints<=maxHP/2 ? TC_YELLOW : TC_GREEN;
   int fill=maxHP ? min(40,(int)((uint32)u->o.hitpoints*40/maxHP)) : 0;
@@ -2109,19 +2827,14 @@ static void DrawActionPanel(void)
 		const StructureInfo *si = &g_table_structureInfo[g_structureActiveType];
 		char title[32];
 		snprintf(title, sizeof(title), "%.13s", String_Get_ByIndex(si->o.stringID_abbrev));
-		PanelHeader(title, si->o.spriteID, true);
+		PanelHeaderCentered(title, si->o.spriteID);
 
-		const char *state = (g_selectionState > 0) ? L10N("OK", "TINKA") : ((g_selectionState < 0) ? L10N("NO SLABS", "BE PAMATO") : L10N("INVALID", "NETINKA"));
-		uint8 stateCol = (g_selectionState > 0) ? TC_DARK_GREEN : ((g_selectionState < 0) ? TC_TEXT : TC_RED);
-		BattleText(282, 76, state, g_fontNew6p, stateCol, false);
+		BattleText(245, 118, L10N("SELECT LOCATION", "PASIRINKITE VIETĄ"), g_fontNew6p, TC_WHITE, true);
+		BattleText(245, 132, L10N("TO BUILD", "STATYBAI"), g_fontNew6p, TC_WHITE, true);
 
-		BattleText(245, 118, L10N("SELECT LOCATION", "PASIRINKITE VIETA"), g_fontNew6p, TC_TEXT, false);
-		BattleText(245, 132, L10N("TO BUILD.", "STATYBAI."), g_fontNew6p, TC_TEXT, false);
-		BattleText(245, 150, L10N("D-PAD: SCROLL MAP", "D-PAD: ZEMELAPIS"), g_fontNew6p, TC_TEXT, false);
-
-		BattleButton(174, 172, 142, 22, L10N("PLACE HERE (A)", "STATYTI (A)"), false, g_selectionState <= 0);
+		BattleButton(174, 172, 142, 22, L10N("PLACE (A)", "STATYTI (A)"), false, g_selectionState <= 0);
 		PanelAddHit(174, 172, 142, 22, HIT_PLACE_HERE, 0);
-		BattleButton(174, 198, 142, 22, L10N("CANCEL (B)", "ATSAUKTI (B)"), false, false);
+		BattleButton(174, 198, 142, 22, L10N("CANCEL (B)", "ATŠAUKTI (B)"), false, false);
 		PanelAddHit(174, 198, 142, 22, HIT_CANCEL, 0);
 		return;
 	}
@@ -2129,13 +2842,17 @@ static void DrawActionPanel(void)
 	/* ---- Target selection --------------------------------------------------- */
 	if (g_selectionType == SELECTIONTYPE_TARGET) {
 		const char *actName = (g_unitHouseMissile != NULL) ? L10N("DEATH HAND", "MIRTIES RANKA") : GUI_3DS_GetActionLabel(g_activeAction);
-		uint16 sprite = (g_unitSelected != NULL) ? g_table_unitInfo[g_unitSelected->o.type].o.spriteID : 0;
-		PanelHeader(actName, sprite, true);
+		if (g_unitSelected == NULL && g_unitHouseMissile != NULL) {
+			PanelHeaderSpecial(actName, HOUSE_WEAPON_MISSILE);
+		} else {
+			uint16 sprite = (g_unitSelected != NULL) ? g_table_unitInfo[g_unitSelected->o.type].o.spriteID : 0;
+			PanelHeader(actName, sprite, true);
+		}
 		BattleText(245, 118, L10N("SELECT TARGET", "PASIRINKITE"), g_fontNew6p, TC_TEXT, false);
-		BattleText(245, 132, L10N("ON THE MAP.", "TAIKINI ZEMELAPY."), g_fontNew6p, TC_TEXT, false);
+		BattleText(245, 132, L10N("ON THE MAP.", "TAIKINĮ ŽEMĖLAPY."), g_fontNew6p, TC_TEXT, false);
 		BattleButton(174, 172, 142, 22, L10N("CONFIRM (A)", "PATVIRTINTI (A)"), false, false);
 		PanelAddHit(174, 172, 142, 22, HIT_CONFIRM, 0);
-		BattleButton(174, 198, 142, 22, L10N("CANCEL (B)", "ATSAUKTI (B)"), false, false);
+		BattleButton(174, 198, 142, 22, L10N("CANCEL (B)", "ATŠAUKTI (B)"), false, false);
 		PanelAddHit(174, 198, 142, 22, HIT_CANCEL, 0);
 		return;
 	}
@@ -2144,7 +2861,8 @@ static void DrawActionPanel(void)
     if(g_selectedUnitsCount>1 && DrawSquadPanel()) return;
 
 	/* ---- Unit(s) selected --------------------------------------------------- */
-	if (g_unitSelected != NULL && g_unitSelected->o.flags.s.allocated) {
+	if (g_unitSelected != NULL && g_unitSelected->o.flags.s.allocated &&
+	    (g_unitSelected->o.houseID == g_playerHouseID || (g_unitSelected->o.seenByHouses & (1 << g_playerHouseID)) != 0 || g_debugScenario)) {
 		const UnitInfo *ui = &g_table_unitInfo[g_unitSelected->o.type];
 		uint32 hp = 0, maxHP = 0;
 		char title[32];
@@ -2155,26 +2873,35 @@ static void DrawActionPanel(void)
 				hp += u->o.hitpoints;
 				maxHP += g_table_unitInfo[u->o.type].o.hitpoints;
 			}
-			snprintf(title, sizeof(title), L10N("SQUAD x%u", "BURYS x%u"), g_selectedUnitsCount);
+			snprintf(title, sizeof(title), L10N("SQUAD x%u", "BŪRYS x%u"), g_selectedUnitsCount);
 		} else {
 			hp = g_unitSelected->o.hitpoints;
 			maxHP = ui->o.hitpoints;
-			snprintf(title, sizeof(title), "%.13s", String_Get_ByIndex(ui->o.stringID_abbrev));
+			snprintf(title, sizeof(title), "%.18s", String_Get_ByIndex(ui->o.stringID_abbrev));
 		}
 		PanelHeader(title, ui->o.spriteID, true);
 		PanelDamageBar(256, 61, 56, 20, hp, maxHP);
+		if (g_unitSelected->o.houseID != g_playerHouseID) return;
 
-        bool combat=false;
-        for(int slot=0;slot<4;slot++) if(ui->o.actionsPlayer[slot]==ACTION_ATTACK) combat=true;
+        bool combat = false;
+        ActionType secondary = ACTION_MAX;
+        for (int slot = 0; slot < 4; slot++) {
+            ActionType action = ui->o.actionsPlayer[slot];
+            if (action == ACTION_ATTACK) combat = true;
+            if (action == ACTION_RETREAT || action == ACTION_DESTRUCT) secondary = action;
+        }
         if(combat) {
          bool isAttackMove = (g_unitSelected->actionID==ACTION_ATTACK || g_unitSelected->actionID==ACTION_MOVE ||
                               g_unitSelected->nextActionID==ACTION_ATTACK || g_unitSelected->nextActionID==ACTION_MOVE);
-         bool isRetreat = (g_unitSelected->actionID==ACTION_RETREAT || g_unitSelected->nextActionID==ACTION_RETREAT);
          bool isGuard = (g_unitSelected->actionID==ACTION_GUARD || g_unitSelected->nextActionID==ACTION_GUARD);
-         BattleButton(174,118,142,50,L10N("ATTACK /\nMOVE (A)","PULTI /\nJUDETI (A)"),isAttackMove,false);
+         BattleButton(174,118,142,50,L10N("ATTACK /\nMOVE (A)","PULTI /\nJUDĖTI (A)"),isAttackMove,false);
          PanelAddHit(174,118,142,50,HIT_SMART_ORDER,0);
-         BattleButton(174,170,142,24,L10N("RETREAT (R)","ATSIKR. (R)"),isRetreat,false);
-         PanelAddHit(174,170,142,24,HIT_UNIT_ACTION,ACTION_RETREAT);
+         if (secondary != ACTION_MAX) {
+             const char *label = secondary == ACTION_RETREAT ? L10N("RETREAT (R)", "ATSITR. (R)") : GUI_3DS_GetActionLabel(secondary);
+             bool active = g_unitSelected->actionID == secondary || g_unitSelected->nextActionID == secondary;
+             BattleButton(174, 170, 142, 24, label, active, false);
+             PanelAddHit(174, 170, 142, 24, HIT_UNIT_ACTION, secondary);
+         }
          BattleButton(174,196,142,24,L10N("GUARD (Y)","SAUGOTI (Y)"),isGuard,false);
          PanelAddHit(174,196,142,24,HIT_UNIT_ACTION,ACTION_GUARD);
         } else {
@@ -2213,10 +2940,21 @@ static void DrawActionPanel(void)
 		PanelDamageBar(256, 61, 56, 20, s->o.hitpoints, si->o.hitpoints);
 		if (s->o.houseID == g_playerHouseID) {
 			bool repairing = s->o.flags.s.repairing;
-			BattleButton(174, 120, 142, 22, repairing ? L10N("REPAIRING (R)", "TAISOMA (R)") : L10N("REPAIR (R)", "TAISYTI (R)"), repairing, false);
-			PanelAddHit(174, 120, 142, 22, HIT_REPAIR, 0);
+			bool damaged = (s->o.hitpoints < si->o.hitpoints);
+			if (!repairing && !damaged && s->o.flags.s.upgrading) {
+				BattleButton(174, 120, 142, 22, L10N("UPGRADING", "TOBULINAMA"), true, false);
+				PanelAddHit(174, 120, 142, 22, HIT_UPGRADE, 0);
+			} else if (!repairing && !damaged && Structure_IsUpgradable(s)) {
+				BattleButton(174, 120, 142, 22, L10N("UPGRADE (L+X)", "TOBULINTI (L+X)"), false, false);
+				PanelAddHit(174, 120, 142, 22, HIT_UPGRADE, 0);
+			} else {
+				BattleButton(174, 120, 142, 22, repairing ? L10N("REPAIRING (R)", "TAISOMA (R)") : L10N("REPAIR (R)", "TAISYTI (R)"), repairing, !repairing && !damaged);
+				PanelAddHit(174, 120, 142, 22, HIT_REPAIR, 0);
+			}
+			if (si->o.flags.factory || s->o.type == STRUCTURE_PALACE) {
+				PanelStructureStatusBox(s, si);
+			}
 		}
-		PanelStructureStatusBox(s, si);
 		return;
 	}
 
@@ -2233,30 +2971,77 @@ static void DrawActionPanel(void)
 			barMax = 100;
 		}
 		bool powerOk = (prod >= req);
-		const char *powerStr = powerOk ? L10N("POWER OK", "GALIA OK") : L10N("POWER LOW", "MAZAI GALIOS");
+		const char *powerStr = powerOk ? L10N("POWER OK", "GALIA OK") : L10N("POWER LOW", "MAŽAI GALIOS");
 		PanelMeterBar(217, 55, 56, 20, barVal, barMax, powerStr, 96, powerOk ? TC_TEXT : TC_RED);
 
 		BattleButton(174, 118, 142, 50, L10N("SELECT ALL\nUNITS (X)", "VISI\nKARIAI (X)"), false, false);
 		PanelAddHit(174, 118, 142, 50, HIT_PRIMARY, 0);
-		BattleButton(174, 170, 142, 50, L10N("JUMP TO BASE\n(SELECT)", "I BAZE\n(SELECT)"), false, false);
+		BattleButton(174, 170, 142, 50, L10N("JUMP TO BASE\n(SELECT)", "Į BAZĘ\n(SELECT)"), false, false);
 		PanelAddHit(174, 170, 142, 50, HIT_JUMP_BASE, 0);
+	}
+}
+
+enum { BATTLE_TRIM_X = 150, BATTLE_PANEL_X = 170 };
+
+static void DrawBattleTrim(const uint8 *src)
+{
+	if (src == NULL) return;
+
+	static bool s_trimLUTInit = false;
+	static uint16 s_trimSrcY[200];
+	static uint8  s_trimSrcX[18];
+	static uint16 s_trimBotSrcY[16];
+	static uint16 s_trimBotSrcX[150];
+	if (!s_trimLUTInit) {
+		for (int y = 40; y < BOTTOM_HEIGHT; y++) {
+			int sourceY;
+			if (y < 58) sourceY = y < 55 ? y : y - 1;
+			else if (y < 71) sourceY = 57 + y - 58;
+			else if (y < 222) sourceY = 70 + (y - 71) % 13;
+			else sourceY = 182 + y - 222;
+			s_trimSrcY[y - 40] = (uint16)sourceY;
+		}
+		for (int x = 0; x < 18; x++) s_trimSrcX[x] = (uint8)(x * 14 / 18);
+		for (int y = 224; y < BOTTOM_HEIGHT; y++) s_trimBotSrcY[y - 224] = (uint16)(125 + (y - 224) * 10 / 15);
+		for (int x = BATTLE_PANEL_X; x < BOTTOM_WIDTH; x++) {
+			s_trimBotSrcX[x - BATTLE_PANEL_X] = (uint16)(x < 179 ? 256 + x - BATTLE_PANEL_X : x >= 311 ? x : 265 + (x - 179) % 11);
+		}
+		s_trimLUTInit = true;
+	}
+
+	/* Keep the original end caps. Tile full stripe periods between the collars
+	 * and widen the divider without changing its house palette. */
+	for (int y = 40; y < BOTTOM_HEIGHT; y++) {
+		const uint8 *stripe = src + s_trimSrcY[y - 40] * SCREEN_WIDTH + 240;
+		uint8 *dst = g_bottomScreenBuffer + y * BOTTOM_WIDTH + BATTLE_TRIM_X;
+		for (int x = 0; x < 18; x++) dst[x] = stripe[s_trimSrcX[x]];
+		dst[18] = stripe[14];
+		dst[19] = stripe[15];
+	}
+
+	/* Preserve the thin gold edges and stretch the striped center to the
+	 * screen edge. The middle is twelve complete repeats of the original. */
+	for (int y = 224; y < BOTTOM_HEIGHT; y++) {
+		const uint8 *srcRow = src + s_trimBotSrcY[y - 224] * SCREEN_WIDTH;
+		uint8 *dst = g_bottomScreenBuffer + y * BOTTOM_WIDTH + BATTLE_PANEL_X;
+		for (int x = 0; x < BOTTOM_WIDTH - BATTLE_PANEL_X; x++) {
+			dst[x] = srcRow[s_trimBotSrcX[x]];
+		}
 	}
 }
 
 void GUI_3DS_RenderBottomScreen(void)
 {
 	if (g_bottomScreenBuffer == NULL || s_launchActive) return;
+	if (s_strategicActive) { StrategicBottom(); return; }
  if(g_3dsModalMessageActive) {
   memcpy(g_bottomScreenBuffer,s_messageBottom,sizeof(s_messageBottom));
   memcpy(g_bottomScreenUIMask,s_messageBottomMask,sizeof(s_messageBottomMask));
-  GUI_3DS_FillRect(g_bottomScreenBuffer,320,8,70,311,204,0);
-  for(int y=70;y<=204;y++) memset(g_bottomScreenUIMask+y*320+8,2,304);
-  GUI_3DS_DrawCenteredSubtitle(s_messageText,118);
-  MenuButton(40,164,240,32,"Continue (A)",true,false); return;
+  return;
  }
  if(s_resultsActive && !CustomDialog()) {
   memset(g_bottomScreenBuffer,0,320*240); memset(g_bottomScreenUIMask,2,sizeof(g_bottomScreenUIMask));
-  MenuButton(40,160,240,36,s_resultsButtons ? L10N("Back (B)","Atgal (B)") : L10N("Continue (A)","Testi (A)"),true,false);
+  MenuButton(40,102,240,36,s_resultsButtons && !s_resultsContinueMission ? L10N("Back (B)","Atgal (B)") : L10N("Continue (A)","Tęsti (A)"),true,false);
   return;
  }
 	memset(g_bottomScreenUIMask, 0, sizeof(g_bottomScreenUIMask));
@@ -2266,12 +3051,27 @@ void GUI_3DS_RenderBottomScreen(void)
 		memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
 		memset(g_bottomScreenUIMask, 2, sizeof(g_bottomScreenUIMask));
 
-		const bool isHousePick = (g_gameMode == GM_PICKHOUSE || g_playerHouseID == HOUSE_MERCENARY ||
-		                          s_houseConfirmID < 3 || s_mentatButtons->drawParameterNormal.spriteID == 373);
-		const char *optProceed = L10N("Proceed (A)", "Testi (A)");
-		const char *optSecond  = isHousePick ? L10N("Back (B)", "Atgal (B)") : L10N("Repeat (B)", "Kartoti (B)");
-		MenuButton(8,148,144,36,optProceed,s_dialogFocus==0,false);
-		MenuButton(168,148,144,36,optSecond,s_dialogFocus==1,false);
+		if (s_subtitleText[0] != '\0') {
+			GUI_3DS_DrawCenteredSubtitle(s_subtitleText, 82);
+		}
+		if (s_mentatButtons->next == NULL) {
+			if (s_mentatButtons->drawParameterNormal.spriteID == 377 && s_mentatTextHasMore) {
+				MenuButton(8, 168, 144, 36, L10N("Next (A)", "Tęsti (A)"), true, false);
+				MenuButton(168, 168, 144, 36, L10N("Back (B)", "Atgal (B)"), false, false);
+			} else {
+				const char *opt = (s_mentatButtons->drawParameterNormal.spriteID == 379)
+					? L10N("Proceed (A)", "Tęsti (A)")
+					: L10N("Back (B)", "Atgal (B)");
+				MenuButton(60, 168, 200, 36, opt, true, false);
+			}
+		} else {
+			const bool isHousePick = (g_gameMode == GM_PICKHOUSE || g_playerHouseID == HOUSE_MERCENARY ||
+			                          s_houseConfirmID < 3 || s_mentatButtons->drawParameterNormal.spriteID == 373);
+			const char *optProceed = L10N("Proceed (A)", "Tęsti (A)");
+			const char *optSecond  = isHousePick ? L10N("Back (B)", "Atgal (B)") : L10N("Repeat (B)", "Kartoti (B)");
+			MenuButton(8, 168, 144, 36, optProceed, s_dialogFocus == 0, false);
+			MenuButton(168, 168, 144, 36, optSecond, s_dialogFocus == 1, false);
+		}
 		return;
 	}
 
@@ -2282,17 +3082,14 @@ void GUI_3DS_RenderBottomScreen(void)
 		const char *rows[11]; bool header[11];
 		int selected = GUI_Mentat_3DS_GetRows(rows, header);
 		for (int i = 0; i < 11; i++) {
-			int y = 6 + i * 17;
+			int y = 6 + i * 21;
 			if (header[i]) {
-				GUI_3DS_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, 16, y + 2, rows[i], 11);
+				GUI_3DS_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, 14, y + 3, rows[i], 11);
 			} else {
 				bool isSel = (i == selected);
-				MenuButton(24,y,288,17,rows[i],isSel,false);
+				MenuButton(20, y, 280, 19, rows[i], isSel, false);
 			}
 		}
-		MenuButton(16,198,149,36,L10N("EXIT (B)","ISEITI (B)"),false,false);
-		MenuButton(168,198,68,36,L10N("UP","VIRS"),false,false);
-		MenuButton(238,198,68,36,L10N("DOWN","ZEMYN"),false,false);
 		return;
 	}
 
@@ -2316,20 +3113,13 @@ void GUI_3DS_RenderBottomScreen(void)
 		int focus = clamp(s_houseFocus, 0, 2);
 
 		/* Centered "Select House" heading above the three crests */
-		const char *titleStr = L10N("Select House", "Pasirinkite gimine");
-		int titleLen = 0;
-		for (const unsigned char *p = (const unsigned char *)titleStr; *p != '\0';) {
-			if (*p == 0xC4 || *p == 0xC5) { p += 2; }
-			else { p++; }
-			titleLen++;
-		}
-		int titleX = max(8, (BOTTOM_WIDTH - titleLen * 8) / 2);
-		GUI_3DS_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, titleX, 32, titleStr, 15);
+		const char *titleStr = L10N("Select House", "Pasirinkite giminę");
+		Cairo_DrawText(g_bottomScreenBuffer, BOTTOM_WIDTH, BOTTOM_WIDTH / 2, 56, titleStr, 15, CAIRO_NO_SHADOW);
 
 		static const char *hNames[3] = {"Atreides", "Ordos", "Harkonnen"};
 		int crestW = 84;
 		int crestH = 64;
-		int dstY = 74;
+		int dstY = 88;
 
 		for (int i = 0; i < 3; i++) {
 			int dstX = 18 + i * 100; /* 18, 118, 218 -> total span 18..302 (centered on 320) */
@@ -2357,7 +3147,7 @@ void GUI_3DS_RenderBottomScreen(void)
 		memset(g_bottomScreenUIMask, 2, sizeof(g_bottomScreenUIMask));
 		int count = min((int)g_widgetProperties[21].height, 6);
 		int rowStep = 28;
-		int totalH = count * rowStep;
+		int totalH = max(0, count * rowStep - 3);
 		int firstY = (BOTTOM_HEIGHT - totalH) / 2;
 		for (int i = 0; i < count; i++) {
 			const char *label = s_titleLabels[i];
@@ -2387,8 +3177,8 @@ void GUI_3DS_RenderBottomScreen(void)
 	 * BATTLE DASHBOARD (GM_NORMAL)
 	 * Authentic Dune II layout inspired by user mockup:
 	 * - Header (Y: 0..39): Dune II DOS components (Mentat, Options, Credits, live ticker)
-	 * - Barber-pole Column (X: 154..169, Y: 40..239): 16px vertical column from SCREEN_0
-	 * - Bottom-Left (X: 0..153, Y: 40..239): Solid black, 128x128 radar centered, viewport box
+	 * - Striped divider (X: 150..169, Y: 40..239) from SCREEN_0
+	 * - Bottom-Left (X: 0..149, Y: 40..239): Solid black, 128x128 radar centered, viewport box
 	 * - Bottom-Right (X: 170..319, Y: 40..239): Tactical panel with portrait, DMG bar & actions
 	 * ========================================================================= */
 
@@ -2399,69 +3189,76 @@ void GUI_3DS_RenderBottomScreen(void)
 		memcpy(g_bottomScreenBuffer, src, BOTTOM_WIDTH * 40);
 	}
 
-	/* 2. Barber-pole Column (X: 154..169, Y: 40..239): 16px wide striped column */
-	if (src != NULL) {
-		for (int y = 40; y < 200; y++) {
-			memcpy(g_bottomScreenBuffer + y * BOTTOM_WIDTH + 154, src + y * SCREEN_WIDTH + 240, 16);
-		}
-		for (int y = 200; y < 240; y++) {
-			memcpy(g_bottomScreenBuffer + y * BOTTOM_WIDTH + 154, src + (y - 80) * SCREEN_WIDTH + 240, 16);
-		}
+	/* Bottom-left radar background. */
+	for (int y = 40; y < BOTTOM_HEIGHT; y++) {
+		memset(g_bottomScreenBuffer + y * BOTTOM_WIDTH, 0, BATTLE_TRIM_X);
 	}
-
-	/* 3. Bottom-Left Radar / Minimap (X: 0..153, Y: 40..239) */
-	for (int y = 40; y < 240; y++) {
-		memset(g_bottomScreenBuffer + y * BOTTOM_WIDTH, 0, 154);
-	}
+	DrawBattleTrim(src);
 
 	/* 128x128 Radar centered at X: 13..140, Y: 76..203 */
 	GUI_3DS_DrawBevel(g_bottomScreenBuffer, BOTTOM_WIDTH, 12, 75, 141, 204, 118, 110);
-	for (int y = 76; y < 204; y++) {
-		memset(g_bottomScreenUIMask + y * BOTTOM_WIDTH + 13, 0, 128);
-	}
 
-	for (int my = 0; my < 64; my++) {
-		for (int mx = 0; mx < 64; mx++) {
-			uint16 packed = Tile_PackXY(mx, my);
-			Tile *t = &g_map[packed];
-			uint8 col = 0; /* Fog of war */
+	{
+		static uint8 s_radarCache[128 * 128];
+		static uint32 s_radarCacheTick = 0xFFFFFFFF;
+		static uint8 s_radarCacheHouse = 0xFF;
+		bool radarDirty = true;
+#ifdef __3DS__
+		radarDirty = ((g_timerGame - s_radarCacheTick) >= 3 || s_radarCacheTick == 0xFFFFFFFF || g_viewport_forceRedraw || g_playerHouseID != s_radarCacheHouse);
+#endif
+		if (radarDirty) {
+			s_radarCacheTick = g_timerGame;
+			s_radarCacheHouse = g_playerHouseID;
+			for (int my = 0; my < 64; my++) {
+				uint8 *row0 = s_radarCache + (my * 2) * 128;
+				uint8 *row1 = row0 + 128;
+				for (int mx = 0; mx < 64; mx++) {
+					uint16 packed = Tile_PackXY(mx, my);
+					Tile *t = &g_map[packed];
+					uint8 col = 0; /* Fog of war */
 
-			if (t->isUnveiled || g_debugScenario) {
-				uint16 type = Map_GetLandscapeType(packed);
-				switch (type) {
-					case LST_SPICE: col = 178; break;
-					case LST_THICK_SPICE: col = 186; break;
-					case LST_ENTIRELY_ROCK: case LST_MOSTLY_ROCK: case LST_PARTIAL_ROCK:
-					case LST_ENTIRELY_MOUNTAIN: case LST_PARTIAL_MOUNTAIN:
-						col = 23; break;
-					case LST_ENTIRELY_DUNE: case LST_PARTIAL_DUNE:
-						col = 114; break;
-					default: col = 112; break;
-				}
-				if (t->hasStructure) {
-					Structure *st = Structure_Get_ByPackedTile(packed);
-					if (st != NULL) {
-						col = st->o.houseID < HOUSE_MAX ? g_table_houseInfo[st->o.houseID].minimapColor : 0;
+					if (t->isUnveiled || g_debugScenario) {
+						if (t->hasUnit) {
+							Unit *un = Unit_Get_ByPackedTile(packed);
+							if (un != NULL) {
+								if (un->o.type == UNIT_SANDWORM) col = 255;
+								else {
+									uint8 houseID = Unit_GetHouseID(un);
+									col = houseID < HOUSE_MAX ? g_table_houseInfo[houseID].minimapColor : 0;
+								}
+							}
+						}
+						if (col == 0 && t->hasStructure) {
+							Structure *st = Structure_Get_ByPackedTile(packed);
+							if (st != NULL) {
+								col = st->o.houseID < HOUSE_MAX ? g_table_houseInfo[st->o.houseID].minimapColor : 0;
+							}
+						}
+						if (col == 0) {
+							uint16 type = Map_GetLandscapeType(packed);
+							switch (type) {
+								case LST_SPICE: col = 178; break;
+								case LST_THICK_SPICE: col = 186; break;
+								case LST_ENTIRELY_ROCK: case LST_MOSTLY_ROCK: case LST_PARTIAL_ROCK:
+								case LST_ENTIRELY_MOUNTAIN: case LST_PARTIAL_MOUNTAIN:
+									col = 23; break;
+								case LST_ENTIRELY_DUNE: case LST_PARTIAL_DUNE:
+									col = 114; break;
+								default: col = 112; break;
+							}
+						}
 					}
-				}
-				if (t->hasUnit) {
-					Unit *un = Unit_Get_ByPackedTile(packed);
-					if (un != NULL) {
-						if (un->o.type == UNIT_SANDWORM) col = 255;
-						else {
-                            uint8 houseID=Unit_GetHouseID(un);
-                            col=houseID < HOUSE_MAX ? g_table_houseInfo[houseID].minimapColor : 0;
-                        }
-					}
+
+					int rx = mx * 2;
+					row0[rx] = col;
+					row0[rx + 1] = col;
+					row1[rx] = col;
+					row1[rx + 1] = col;
 				}
 			}
-
-			int rx = 13 + mx * 2;
-			int ry = 76 + my * 2;
-			g_bottomScreenBuffer[ry * BOTTOM_WIDTH + rx] = col;
-			g_bottomScreenBuffer[ry * BOTTOM_WIDTH + rx + 1] = col;
-			g_bottomScreenBuffer[(ry + 1) * BOTTOM_WIDTH + rx] = col;
-			g_bottomScreenBuffer[(ry + 1) * BOTTOM_WIDTH + rx + 1] = col;
+		}
+		for (int y = 0; y < 128; y++) {
+			memcpy(g_bottomScreenBuffer + (76 + y) * BOTTOM_WIDTH + 13, s_radarCache + y * 128, 128);
 		}
 	}
 
@@ -2479,26 +3276,27 @@ void GUI_3DS_RenderBottomScreen(void)
 	/* 4. Bottom-Right action panel, laid out like the original game */
 	DrawActionPanel();
 
-	/* 5. Horizontal Barber-pole Column under the action panel (X: 170..319, Y: 224..239) */
-	if (src != NULL) {
-		for (int y = 0; y < 16; y++) {
-			uint8 *dstRow = g_bottomScreenBuffer + (224 + y) * BOTTOM_WIDTH;
-			for (int x = 170; x < 320; x++) {
-				int sy = 40 + (x - 170);
-				if (sy >= 200) sy -= 80;
-				dstRow[x] = src[sy * SCREEN_WIDTH + 240 + y];
-				g_bottomScreenUIMask[(224 + y) * BOTTOM_WIDTH + x] = 0;
-			}
-		}
-	}
+	/* The gold lip separates the cream controls from the original striped trim. */
+	uint8 *buf = g_bottomScreenBuffer;
+	GUI_3DS_FillRect(buf, BOTTOM_WIDTH, 169, 40, 319, 40, 0xE2);
+	GUI_3DS_FillRect(buf, BOTTOM_WIDTH, 169, 41, 319, 41, 0xE5);
+	GUI_3DS_FillRect(buf, BOTTOM_WIDTH, 169, 41, 169, 222, 0xE2);
+	GUI_3DS_FillRect(buf, BOTTOM_WIDTH, 170, 42, 170, 222, 0xE5);
+	GUI_3DS_FillRect(buf, BOTTOM_WIDTH, 169, 222, 319, 222, 0xE5);
+	GUI_3DS_FillRect(buf, BOTTOM_WIDTH, 169, 223, 319, 223, 0xE2);
+	for (int y = 40; y < 224; y++) g_bottomScreenUIMask[y * BOTTOM_WIDTH + 170] = 0;
+	memset(g_bottomScreenUIMask + 40 * BOTTOM_WIDTH + 170, 0, 150);
+	memset(g_bottomScreenUIMask + 41 * BOTTOM_WIDTH + 170, 0, 150);
+	memset(g_bottomScreenUIMask + 222 * BOTTOM_WIDTH + 170, 0, 150);
+	memset(g_bottomScreenUIMask + 223 * BOTTOM_WIDTH + 170, 0, 150);
 }
 
 void GUI_3DS_HandleBottomTouchHold(int16 touchX, int16 touchY)
 {
 	if (GUI_3DS_IsMenuOrDialogActive() || GUI_3DS_CustomMenuActive() || g_3dsModalMessageActive) return;
 
-	/* Continuous Radar Drag (X: 0..153, Y: 40..239) */
-	if (touchX >= 0 && touchX < 154 && touchY >= 40 && touchY < 240) {
+	/* Continuous Radar Drag (X: 0..149, Y: 40..239) */
+	if (touchX >= 0 && touchX < BATTLE_TRIM_X && touchY >= 40 && touchY < 240) {
 		int mapX = clamp((touchX - 13) / 2, 0, 63);
 		int mapY = clamp((touchY - 76) / 2, 0, 63);
 		GUI_3DS_CenterCameraOnTile((uint16)mapX, (uint16)mapY);
@@ -2516,14 +3314,17 @@ void GUI_3DS_HandleBottomTouchHold(int16 touchX, int16 touchY)
 void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 {
 	if(s_resultsActive && !g_3dsModalMessageActive && !CustomDialog()) {
- if(touchX<40 || touchX>=280 || touchY<160 || touchY>=196) return;
- if(s_resultsButtons) {
-  Widget *chosen=NULL;
-  for(Widget *w=s_resultsButtons;w;w=w->next) if(w->index==101) chosen=w;
-  s_dialogChosen=chosen ? chosen : s_resultsButtons;
- } else EmitKey(0x1C);
- return;
- }
+		if (touchX >= 40 && touchX < 280 && touchY >= 102 && touchY < 138) {
+			if(s_resultsButtons) {
+				Widget *chosen=NULL;
+				for(Widget *w=s_resultsButtons;w;w=w->next) if(w->index==101) chosen=w;
+				s_dialogChosen=chosen ? chosen : s_resultsButtons;
+			} else EmitKey(0x1C);
+		} else {
+			EmitKey(0x1C);
+		}
+		return;
+	}
  /* 0. If in cutscene, mentat briefing, or modal message dialog: tap advances/skips */
 	if ((GUI_3DS_IsCutsceneOrBriefing() && !g_3dsHousePickerActive && !s_mentatButtons && !g_3dsMentatHelpActive) || g_3dsModalMessageActive) {
 		Input_EventHandler(0x1C); /* Enter */
@@ -2531,16 +3332,12 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 		return;
 	}
 
-	/* Mentat help subject list (bottom screen): rows, Exit and scroll buttons */
+	/* Mentat help subject list (bottom screen): full-height topic rows */
 	if (g_3dsMentatHelpActive && s_mentatButtons == NULL) {
-		if (touchY >= 198 && touchY < 234) {
-			if (touchX >= 16 && touchX < 165) g_3dsMentatExit = true;
-			else if (touchX >= 168 && touchX < 236) g_3dsMentatScroll = -1;
-			else if (touchX >= 238 && touchX < 306) g_3dsMentatScroll = 1;
-		} else if (touchY >= 4 && touchY < 4 + 11 * 17 && touchX >= 16 && touchX < 304) {
+		if (touchY >= 6 && touchY < 6 + 11 * 21 && touchX >= 20 && touchX < 300) {
 			const char *rows[11]; bool header[11];
 			GUI_Mentat_3DS_GetRows(rows, header);
-			int row = (touchY - 4) / 17;
+			int row = (touchY - 6) / 21;
 			if (row >= 0 && row < 11 && !header[row]) g_3dsMentatTapRow = row;
 		}
 		return;
@@ -2548,15 +3345,24 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 
 	if (GUI_3DS_CustomMenuActive()) {
 		if (s_mentatButtons) {
+			if (s_mentatButtons->next == NULL && s_mentatButtons->drawParameterNormal.spriteID == 377) {
+				if (s_mentatTextHasMore) {
+					GUI_3DS_MentatChoose((touchX < BOTTOM_WIDTH / 2) ? 0x8001 : 0x8002);
+				} else {
+					GUI_3DS_MentatChoose(0x8002);
+				}
+				return;
+			}
 			s_dialogFocus = (touchX < BOTTOM_WIDTH / 2) ? 0 : 1;
 			GUI_3DS_MenuInput(0, 0, true);
 			return;
 		} else if (CustomDialog()) {
 			Widget *items[9]; int count = DialogItems(items);
-			int ly0, lstep, lrows; DialogLayout(&ly0, &lstep, &lrows);
+			int ly0, lstep, lrows, lbtnX, lbtnW;
+			DialogLayout(count, &ly0, &lstep, &lrows, &lbtnX, &lbtnW);
 			int first = max(0, s_dialogFocus - (lrows - 1));
 			int visibleCount = min(count - first, lrows);
-			if (touchY >= ly0 && touchY < ly0 + visibleCount * lstep) {
+			if (touchX >= lbtnX && touchX < lbtnX + lbtnW && touchY >= ly0 && touchY < ly0 + visibleCount * lstep) {
 				int row = first + (touchY - ly0) / lstep;
 				if (row >= 0 && row < count) { s_dialogFocus = row; GUI_3DS_MenuInput(0, 0, true); }
 			}
@@ -2626,8 +3432,8 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 				}
 			}
 		} else if (g_3dsHousePickerActive) {
-			/* 3 horizontal crest squares & house names at X: 12..308, Y: 54..180 */
-			if (touchX >= 12 && touchX <= 308 && touchY >= 54 && touchY <= 180) {
+			/* 3 horizontal crest squares & house names at X: 12..308, Y: 68..194 */
+			if (touchX >= 12 && touchX <= 308 && touchY >= 68 && touchY <= 194) {
 				int idx = clamp((touchX - 14) / 100, 0, 2);
 				s_houseFocus = idx;
 				GUI_3DS_MenuInput(0, 0, true);
@@ -2635,7 +3441,7 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 		} else if (GUI_3DS_IsTitleMenu()) {
 			int count = min((int)g_widgetProperties[21].height, 6);
 			int rowStep = 28;
-			int totalH = count * rowStep;
+			int totalH = max(0, count * rowStep - 3);
 			int firstY = (BOTTOM_HEIGHT - totalH) / 2;
 			if (touchY >= firstY && touchY < firstY + count * rowStep) {
 				int row = (touchY - firstY) / rowStep;
@@ -2680,8 +3486,8 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 		return;
 	}
 
-	/* B. Radar Tap (X: 0..153, Y: 40..239) -> Jump Camera */
-	if (touchX >= 0 && touchX < 154 && touchY >= 40 && touchY < 240) {
+	/* B. Radar Tap (X: 0..149, Y: 40..239) -> Jump Camera */
+	if (touchX >= 0 && touchX < BATTLE_TRIM_X && touchY >= 40 && touchY < 240) {
 		int mapX = clamp((touchX - 13) / 2, 0, 63);
 		int mapY = clamp((touchY - 76) / 2, 0, 63);
 		GUI_3DS_CenterCameraOnTile((uint16)mapX, (uint16)mapY);
@@ -2739,7 +3545,7 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 
 				case HIT_CANCEL:
 					if (g_selectionType == SELECTIONTYPE_PLACE) Unit_3DS_CancelPlacement();
-					else if (g_selectionType == SELECTIONTYPE_TARGET) { GUI_ChangeSelectionType(SELECTIONTYPE_UNIT); Sound_StartSound(3); }
+					else if (g_selectionType == SELECTIONTYPE_TARGET) { Unit_3DS_CancelTarget(); Sound_StartSound(3); }
 					break;
 
 				case HIT_PLACE_HERE:
@@ -2780,7 +3586,7 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 							Unit_3DS_OpenFactory(st);
 						} else if (g_table_structureInfo[st->o.type].o.flags.factory) {
 							Unit_3DS_BuildStructureObject(st);
-						} else if (st->o.type == STRUCTURE_PALACE && st->countDown == 0) {
+						} else if (st->o.type == STRUCTURE_PALACE && st->countDown == 0 && g_unitHouseMissile == NULL) {
 							Structure_ActivateSpecial(st);
 							Sound_StartSound(3);
 						} else {

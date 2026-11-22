@@ -48,12 +48,14 @@ void Unit_3DS_UpdateBoxSelection(int16 x, int16 y);
 void Unit_3DS_FinishBoxSelection(void);
 
 void Unit_3DS_SelectAllVisibleUnits(void);
+void Unit_3DS_SelectAllVisibleUnitsOfType(Unit *anchor);
 bool Unit_3DS_CenterSelection(void);
 
 void Unit_3DS_SaveGroup(uint8 groupIndex);
 void Unit_3DS_RecallGroup(uint8 groupIndex);
 
 void Unit_3DS_SmartAction(uint16 packedTile);
+void Unit_3DS_CancelTarget(void);
 void Unit_3DS_IssueCommand(ActionType action, uint16 packedTile);
 
 bool Unit_3DS_StartPlacement(Structure *s);

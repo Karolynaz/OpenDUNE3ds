@@ -2611,6 +2611,17 @@ void Unit_LaunchHouseMissile(uint16 packed)
 	packed = Tile_PackTile(tile);
 
 	isAI = g_unitHouseMissile->o.houseID != g_playerHouseID;
+#ifdef __3DS__
+	if (!isAI) {
+		PoolFindStruct find;
+		find.houseID = g_unitHouseMissile->o.houseID;
+		find.type    = STRUCTURE_PALACE;
+		find.index   = 0xFFFF;
+		for (Structure *ps = Structure_Find(&find); ps != NULL; ps = Structure_Find(&find)) {
+			ps->countDown = g_table_houseInfo[g_unitHouseMissile->o.houseID].specialCountDown;
+		}
+	}
+#endif
 
 	Unit_Free(g_unitHouseMissile);
 

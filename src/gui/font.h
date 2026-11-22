@@ -25,8 +25,17 @@ extern int8 g_fontCharOffset;
 
 extern Font *g_fontCurrent;
 
+enum FontDiacritic {
+	FONT_DIA_NONE   = 0,
+	FONT_DIA_OGONEK = 1,
+	FONT_DIA_CARON  = 2,
+	FONT_DIA_DOT    = 3,
+	FONT_DIA_MACRON = 4
+};
+
 extern bool Font_Init(void);
 extern void Font_Uninit(void);
+extern unsigned char Font_NextChar(const char **str, uint8 *diacritic);
 extern uint16 Font_GetCharWidth(unsigned char c);
 extern uint16 Font_GetStringWidth(const char *string);
 extern void Font_Select(Font *f);

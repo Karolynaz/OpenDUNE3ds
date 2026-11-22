@@ -48,8 +48,8 @@ Kai pastatas paruoštas, pažymėkite Construction Yard ir dar kartą spauskite 
 ## 4. Įdiegimas į Nintendo 3DS
 
 1. **Failų paruošimas:**
-   * Nukopijuokite `OpenDUNE3DS.3dsx` ir `OpenDUNE3DS.smdh` į SD kortelės katalogą `sdmc:/3ds/dune3ds/`.
-   * Arba įdiekite `OpenDUNE3DS.cia` per **FBI** įrankį tiesiai į 3DS pagrindinį meniu (Home Menu).
+   * Nukopijuokite `dune3ds.3dsx` ir `dune3ds.smdh` į SD kortelės katalogą `sdmc:/3ds/dune3ds/`.
+   * Arba įdiekite `dune3ds.cia` per **FBI** įrankį tiesiai į 3DS pagrindinį meniu (Home Menu).
 2. **Žaidimo duomenų failai:**
    * Nukopijuokite originalius arba lietuviškus „Dune II“ duomenų failus (`.PAK`, `.VOC`, `.CPS` ir kt.) į `sdmc:/3ds/dune3ds/data/` arba `sdmc:/3ds/dune3ds/`.
    * Išsaugojimų aplankas `sdmc:/3ds/dune3ds/` sukuriamas automatiškai. Perkeldami iš ankstesnio `opendune` aplanko, perkelkite ir savo išsaugojimus.
@@ -72,9 +72,9 @@ make -f Makefile.3ds
 ```
 
 Sėkmingai sugeneruojami:
-* `OpenDUNE3DS.3dsx` (paleidžiamas per Homebrew Launcher)
-* `OpenDUNE3DS.cia` (instaliuojamas į konsolės pagrindinį ekraną)
-* `OpenDUNE3DS.smdh` (piktograma ir aprašymas)
+* `dune3ds.3dsx` (paleidžiamas per Homebrew Launcher)
+* `dune3ds.cia` (instaliuojamas į konsolės pagrindinį ekraną)
+* `dune3ds.smdh` (piktograma ir aprašymas)
 
 ## 6. Sąsajos patikra kompiuteryje
 

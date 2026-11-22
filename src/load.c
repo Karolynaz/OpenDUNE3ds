@@ -19,6 +19,9 @@
 #include "opendune.h"
 #include "os/error.h"
 #include "saveload/saveload.h"
+#ifdef __3DS__
+#include "save.h"
+#endif
 #include "sprites.h"
 #include "string.h"
 #include "structure.h"
@@ -128,28 +131,129 @@ static bool Load_Main(FILE *fp)
 	return true;
 }
 
+#ifdef __3DS__
+static bool Load_CheckLayout(FILE *fp, long size)
+{
+	uint32 header, length, formLength;
+	uint16 version = 0;
+	enum {
+		INFO = 1, HOUSE = 2, UNITS = 4, BUILDINGS = 8, MAP = 16, TEAMS = 32
+	};
+	unsigned seen = 0;
+
+	if (fread(&header, 4, 1, fp) != 1 || BETOH32(header) != CC_FORM ||
+			fread(&formLength, 4, 1, fp) != 1 ||
+			fread(&header, 4, 1, fp) != 1 || BETOH32(header) != CC_SCEN) return false;
+
+	for (long position = 12; position < size;) {
+		if (size - position < 8 || fread(&header, 4, 1, fp) != 1 ||
+				fread(&length, 4, 1, fp) != 1) return false;
+
+		length = BETOH32(length);
+		position += 8;
+		if (length > (unsigned long)(size - position) ||
+				(length & 1) > (unsigned long)(size - position) - length) return false;
+
+		unsigned field = 0;
+		switch (BETOH32(header)) {
+			case CC_INFO:
+				if (length < 2 || !fread_le_uint16(&version, fp) || version == 0) return false;
+				field = INFO;
+				break;
+			case CC_PLYR: if (length == 0) return false; field = HOUSE; break;
+			case CC_UNIT: field = UNITS; break;
+			case CC_BLDG: field = BUILDINGS; break;
+			case CC_MAP:  field = MAP; break;
+			case CC_TEAM: field = TEAMS; break;
+			default: break;
+		}
+
+		if (seen & field) return false;
+		seen |= field;
+		position += length + (length & 1);
+		if (fseek(fp, position, SEEK_SET) != 0) return false;
+	}
+
+	unsigned required = INFO | HOUSE;
+	if (version == 0x0290) {
+		if (BETOH32(formLength) != (unsigned long)(size - 8)) return false;
+		required |= UNITS | BUILDINGS | MAP | TEAMS;
+	}
+	return (seen & required) == required && fseek(fp, 0, SEEK_SET) == 0;
+}
+#endif
+
 bool SaveGame_LoadFile(char *filename)
 {
-	FILE *fp;
-	bool res;
-
-	Sound_Output_Feedback(0xFFFE);
-
-	Game_Init();
-
-	fp = fopendatadir(SEARCHDIR_PERSONAL_DATA_DIR, filename, "rb");
+#ifdef __3DS__
+	SaveGame_RecoverFile(filename);
+#endif
+	FILE *fp = fopendatadir(SEARCHDIR_PERSONAL_DATA_DIR, filename, "rb");
 	if (fp == NULL) {
 		Error("Failed to open file '%s' for reading.\n", filename);
 		return false;
 	}
 
+#ifdef __3DS__
+	/* Read the whole file before changing the running game. The SD card is
+	 * no longer needed once the load starts. */
+	long size = fseek(fp, 0, SEEK_END) == 0 ? ftell(fp) : -1;
+	char *data = size >= 12 ? malloc(size) : NULL;
+	bool read = data != NULL && fseek(fp, 0, SEEK_SET) == 0 && fread(data, 1, size, fp) == (size_t)size;
+	fclose(fp);
+	fp = read ? fmemopen(data, size, "rb") : NULL;
+
+	char *backup = NULL;
+	size_t backupSize = 0;
+	FILE *restore = NULL;
+	const GameMode oldMode = g_gameMode;
+	bool ready = fp != NULL && Load_CheckLayout(fp, size);
+	if (ready && oldMode == GM_NORMAL) {
+		FILE *snapshot = open_memstream(&backup, &backupSize);
+		ready = snapshot != NULL;
+		if (snapshot != NULL) {
+			ready = SaveGame_WriteStream(snapshot, "");
+			if (fclose(snapshot) != 0) ready = false;
+		}
+		if (ready && backupSize != 0) restore = fmemopen(backup, backupSize, "rb");
+		ready = restore != NULL;
+	}
+
+	if (!ready) {
+		if (fp != NULL) fclose(fp);
+		free(data);
+		free(backup);
+		Error("Could not prepare savegame '%s' for loading.\n", filename);
+		return false;
+	}
+#endif
+
+	Sound_Output_Feedback(0xFFFE);
+	Game_Init();
 	Sprites_LoadTiles();
 
 	g_validateStrictIfZero++;
-	res = Load_Main(fp);
+	bool res = Load_Main(fp);
 	g_validateStrictIfZero--;
 
 	fclose(fp);
+
+#ifdef __3DS__
+	free(data);
+	if (!res) {
+		g_gameMode = oldMode;
+		if (restore != NULL) {
+			Game_Init();
+			g_validateStrictIfZero++;
+			bool restored = Load_Main(restore);
+			g_validateStrictIfZero--;
+			if (restored) Game_Prepare();
+			else Error("Could not restore the running mission.\n");
+		}
+	}
+	if (restore != NULL) fclose(restore);
+	free(backup);
+#endif
 
 	if (!res) {
 		Error("Error while loading savegame '%s'.\n", filename);

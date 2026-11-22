@@ -444,9 +444,11 @@ void GUI_Widget_Viewport_Draw(bool forceRedraw, bool hasScrolled, bool drawToMai
 		if (Map_IsPositionInViewport(u->targetPreLast, &x, &y)) {
 			GUI_DrawSprite(SCREEN_ACTIVE, sprite, x, y, 2, DRAWSPRITE_FLAG_BLUR | DRAWSPRITE_FLAG_WIDGETPOS | DRAWSPRITE_FLAG_CENTER);
 		}
+#ifndef __3DS__
 		if (u == g_unitSelected && Map_IsPositionInViewport(u->o.position, &x, &y)) {
 			GUI_DrawSprite(SCREEN_ACTIVE, g_sprites[6], x, y, 2, DRAWSPRITE_FLAG_WIDGETPOS | DRAWSPRITE_FLAG_CENTER);
 		}
+#endif
 	}
 
 	if (g_unitSelected == NULL && (g_selectionRectangleNeedRepaint || hasScrolled) && (Structure_Get_ByPackedTile(g_selectionRectanglePosition) != NULL || g_selectionType == SELECTIONTYPE_PLACE || g_debugScenario)) {
@@ -631,9 +633,11 @@ void GUI_Widget_Viewport_Draw(bool forceRedraw, bool hasScrolled, bool drawToMai
 				GUI_DrawSprite(SCREEN_ACTIVE, g_sprites[spriteID], x, y - 14, 2, DRAWSPRITE_FLAG_WIDGETPOS | DRAWSPRITE_FLAG_CENTER);
 			}
 
-			if (u != g_unitSelected) continue;
-
-			GUI_DrawSprite(SCREEN_ACTIVE, g_sprites[6], x, y, 2, DRAWSPRITE_FLAG_WIDGETPOS | DRAWSPRITE_FLAG_CENTER);
+#ifndef __3DS__
+			if (u == g_unitSelected) {
+				GUI_DrawSprite(SCREEN_ACTIVE, g_sprites[6], x, y, 2, DRAWSPRITE_FLAG_WIDGETPOS | DRAWSPRITE_FLAG_CENTER);
+			}
+#endif
 		}
 
 		g_dirtyUnitCount = 0;
@@ -766,6 +770,11 @@ void GUI_Widget_Viewport_Draw(bool forceRedraw, bool hasScrolled, bool drawToMai
 	}
 
 	if (g_changedTilesCount != 0) {
+#ifdef __3DS__
+		if (hasScrolled) Map_UpdateMinimapPosition(g_minimapPosition, true);
+		g_changedTilesCount = 0;
+		memset(g_changedTilesMap, 0, sizeof(g_changedTilesMap));
+#else
 		bool init = false;
 		bool update = false;
 		uint16 minY = 0xffff;
@@ -821,6 +830,7 @@ void GUI_Widget_Viewport_Draw(bool forceRedraw, bool hasScrolled, bool drawToMai
 		} else {
 			g_changedTilesCount = 0;
 		}
+#endif
 	}
 
 	if ((g_viewportMessageCounter & 1) != 0 && g_viewportMessageText != NULL && (minX[6] <= 14 || maxX[6] >= 0 || hasScrolled || forceRedraw)) {
@@ -981,6 +991,11 @@ bool GUI_Widget_Viewport_DrawTile(uint16 packed)
  */
 void GUI_Widget_Viewport_RedrawMap(Screen screenID)
 {
+#ifdef __3DS__
+	VARIABLE_NOT_USED(screenID);
+	Map_UpdateMinimapPosition(g_minimapPosition, true);
+	return;
+#else
 	Screen oldScreenID = SCREEN_1;
 	uint16 i;
 
@@ -997,4 +1012,5 @@ void GUI_Widget_Viewport_RedrawMap(Screen screenID)
 	GUI_Mouse_Hide_InWidget(3);
 	GUI_Screen_Copy(32, 136, 32, 136, 8, 64, SCREEN_1, SCREEN_0);
 	GUI_Mouse_Show_InWidget();
+#endif
 }

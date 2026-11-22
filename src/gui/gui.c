@@ -43,6 +43,7 @@
 #include "../pool/unit.h"
 #include "../sprites.h"
 #include "../string.h"
+#include "../table/strings_lt.h"
 #include "../structure.h"
 #include "../table/strings.h"
 #include "../tile.h"
@@ -464,6 +465,54 @@ static void GUI_DrawChar(unsigned char c, uint16 x, uint16 y)
  * @param fgColour The foreground colour of the text.
  * @param bgColour The background colour of the text.
  */
+static void GUI_DrawDiacritic(unsigned char base, uint8 dia, uint16 x, uint16 y)
+{
+	if (dia == FONT_DIA_NONE || g_fontCurrent == NULL || base >= g_fontCurrent->count) return;
+	uint8 *screen = GFX_Screen_GetActive();
+	FontChar *fc = &g_fontCurrent->chars[base];
+	uint8 fg = g_colours[1];
+	if (fg == 0 || fc->width == 0) return;
+
+	int16 cx = (int16)x + (int16)(fc->width / 2);
+	if (dia == FONT_DIA_OGONEK) {
+		int16 oy = (int16)y + (int16)fc->unusedLines + (int16)fc->usedLines;
+		int16 ox = (int16)x + (int16)fc->width - 2;
+		if (base == 'i' || base == 'I') ox = cx;
+		if (oy >= 0 && oy < SCREEN_HEIGHT && ox >= 0 && ox < SCREEN_WIDTH) {
+			screen[oy * SCREEN_WIDTH + ox] = fg;
+		}
+		if (oy + 1 >= 0 && oy + 1 < SCREEN_HEIGHT && ox + 1 >= 0 && ox + 1 < SCREEN_WIDTH) {
+			screen[(oy + 1) * SCREEN_WIDTH + ox + 1] = fg;
+		}
+		return;
+	}
+
+	int16 topY = (int16)y + (int16)fc->unusedLines - 2;
+	if (topY < 0) topY = 0;
+	if (dia == FONT_DIA_DOT) {
+		if (topY + 1 < SCREEN_HEIGHT && cx >= 0 && cx < SCREEN_WIDTH) {
+			screen[(topY + 1) * SCREEN_WIDTH + cx] = fg;
+		}
+	} else if (dia == FONT_DIA_MACRON) {
+		int16 my = topY + 1;
+		for (int16 dx = -1; dx <= 1; dx++) {
+			int16 px = cx + dx;
+			if (my >= 0 && my < SCREEN_HEIGHT && px >= 0 && px < SCREEN_WIDTH) {
+				screen[my * SCREEN_WIDTH + px] = fg;
+			}
+		}
+	} else if (dia == FONT_DIA_CARON) {
+		int16 pxL = cx - 1, pxR = cx + 1;
+		if (topY >= 0 && topY < SCREEN_HEIGHT) {
+			if (pxL >= 0 && pxL < SCREEN_WIDTH) screen[topY * SCREEN_WIDTH + pxL] = fg;
+			if (pxR >= 0 && pxR < SCREEN_WIDTH) screen[topY * SCREEN_WIDTH + pxR] = fg;
+		}
+		if (topY + 1 >= 0 && topY + 1 < SCREEN_HEIGHT && cx >= 0 && cx < SCREEN_WIDTH) {
+			screen[(topY + 1) * SCREEN_WIDTH + cx] = fg;
+		}
+	}
+}
+
 void GUI_DrawText(const char *string, int16 left, int16 top, uint8 fgColour, uint8 bgColour)
 {
 	uint8 colours[2];
@@ -488,15 +537,19 @@ void GUI_DrawText(const char *string, int16 left, int16 top, uint8 fgColour, uin
 	y = top;
 	while (*s != '\0') {
 		uint16 width;
+		uint8 dia = FONT_DIA_NONE;
+		unsigned char base;
 
 		if (*s == '\n' || *s == '\r') {
 			x = left;
 			y += g_fontCurrent->height;
 
 			while (*s == '\n' || *s == '\r') s++;
+			if (*s == '\0') break;
 		}
 
-		width = Font_GetCharWidth(*s);
+		base = Font_NextChar(&s, &dia);
+		width = Font_GetCharWidth(base);
 
 		if (x + width > SCREEN_WIDTH) {
 			x = left;
@@ -504,10 +557,10 @@ void GUI_DrawText(const char *string, int16 left, int16 top, uint8 fgColour, uin
 		}
 		if (y > SCREEN_HEIGHT) break;
 
-		GUI_DrawChar(*s, x, y);
+		GUI_DrawChar(base, x, y);
+		if (dia != FONT_DIA_NONE) GUI_DrawDiacritic(base, dia, x, y);
 
 		x += width;
-		s++;
 	}
 }
 
@@ -798,7 +851,7 @@ uint16 GUI_DisplayModalMessage(const char *str, unsigned int spriteID, ...)
 	GUI_Mouse_Hide_Safe();
 
 #ifdef __3DS__
-	GUI_3DS_BeginMessage(textBuffer);
+	GUI_3DS_BeginMessageEx(textBuffer, (uint16)spriteID);
 #endif
 
 	oldScreenID = GFX_Screen_SetActive(SCREEN_0);
@@ -842,7 +895,6 @@ uint16 GUI_DisplayModalMessage(const char *str, unsigned int spriteID, ...)
 
 	do {
 		GUI_PaletteAnimate();
-
 		ret = Input_WaitForValidInput();
 		sleepIdle();
 	} while (ret == 0 || (ret & 0x800) != 0);
@@ -896,13 +948,20 @@ uint16 GUI_SplitText(char *str, uint16 maxwidth, char delimiter)
 
 	while (*str != '\0') {
 		uint16 width = 0;
+		char *lastSpace = NULL;
 
 		lines++;
 
-		while (width < maxwidth && *str != delimiter && *str != '\r' && *str != '\0') width += Font_GetCharWidth(*str++);
+		while (width < maxwidth && *str != delimiter && *str != '\r' && *str != '\0') {
+			const char *p = str;
+			unsigned char base = Font_NextChar(&p, NULL);
+			if (base == ' ') lastSpace = str;
+			width += Font_GetCharWidth(base);
+			str = (char *)p;
+		}
 
-		if (width >= maxwidth) {
-			while (*str != 0x20 && *str != delimiter && *str != '\r' && *str != '\0') width -= Font_GetCharWidth(*str--);
+		if (width >= maxwidth && lastSpace != NULL) {
+			str = lastSpace;
 		}
 
 		if (*str != '\0') *str++ = delimiter;
@@ -1579,8 +1638,12 @@ static void GUI_HallOfFame_DrawBackground(uint16 score, bool hallOfFame)
 		snprintf(buffer, sizeof(buffer), String_Get_ByIndex(STR_TIME_DH_DM), s_ticksPlayed / 60, s_ticksPlayed % 60);
 
 		if (s_ticksPlayed < 60) {
-			char *hours = strchr(buffer, '0');
-			while (*hours != ' ') memmove(hours, hours + 1, strlen(hours));
+			if (g_config.language == LANGUAGE_LITHUANIAN) {
+				snprintf(buffer, sizeof(buffer), "Laikas: %d min.", s_ticksPlayed);
+			} else {
+				char *hours = strchr(buffer, '0');
+				while (*hours != ' ') memmove(hours, hours + 1, strlen(hours));
+			}
 		}
 
 		/* "Score: %d" */
@@ -1619,10 +1682,20 @@ static void GUI_HallOfFame_DrawBackground(uint16 score, bool hallOfFame)
 	GFX_Screen_SetActive(oldScreenID);
 }
 
+static bool s_endStatsFastForward = false;
+
 static void GUI_EndStats_Sleep(uint16 delay)
 {
+	if (s_endStatsFastForward) return;
 	for (g_timerTimeout = delay; g_timerTimeout != 0; sleepIdle()) {
 		GUI_HallOfFame_Tick();
+#ifdef __3DS__
+		if (Input_Keyboard_NextKey() != 0) {
+			Input_WaitForValidInput();
+			s_endStatsFastForward = true;
+			break;
+		}
+#endif
 	}
 }
 
@@ -1650,6 +1723,7 @@ void GUI_EndStats_Show(uint16 killedAllied, uint16 killedEnemy, uint16 destroyed
 	uint16 i;
 
 	s_ticksPlayed = ((g_timerGame - g_tickScenarioStart) / 3600) + 1;
+	s_endStatsFastForward = false;
 
 	score = Update_Score(score, &harvestedAllied, &harvestedEnemy, houseID);
 
@@ -1725,6 +1799,7 @@ void GUI_EndStats_Show(uint16 killedAllied, uint16 killedEnemy, uint16 destroyed
 			posY = 93 + (i * 36) + (j * 9);
 
 			for (score = 0; score < scores[i][j].value; score += scores[i][j].increment) {
+				if (s_endStatsFastForward) break;
 				GUI_DrawFilledRectangle(271, posY, 303, posY + 5, 226);
 				GUI_DrawText_Wrapper("%u", 287, posY - 1, 0x14, 0, 0x121, score);
 
@@ -1745,12 +1820,21 @@ void GUI_EndStats_Show(uint16 killedAllied, uint16 killedEnemy, uint16 destroyed
 				GUI_EndStats_Sleep(g_timerTimeout);
 			}
 
+			if (s_endStatsFastForward) {
+				uint16 fullW = scores[i][j].value / scores[i][j].increment;
+				if (fullW > statsBarWidth) fullW = statsBarWidth;
+				for (uint16 w = 0; w < fullW; w++) {
+					GUI_DrawLine(textLeft + w, posY, textLeft + w, posY + 5, colour);
+					GUI_DrawLine(textLeft + w + 1, posY + 1, textLeft + w + 1, posY + 6, 12);
+				}
+			}
+
 			GUI_DrawFilledRectangle(271, posY, 303, posY + 5, 226);
 			GUI_DrawText_Wrapper("%u", 287, posY - 1, 0xF, 0, 0x121, scores[i][j].value);
 
 			GFX_Screen_Copy2(textLeft, posY, textLeft, posY, 304, 7, SCREEN_1, SCREEN_0, false);
 
-			Driver_Sound_Play(38, 0xFF);
+			if (!s_endStatsFastForward) Driver_Sound_Play(38, 0xFF);
 
 			GUI_EndStats_Sleep(12);
 		}
@@ -1834,6 +1918,8 @@ uint8 GUI_PickHouse(void)
 
 #ifdef __3DS__
 		g_3dsHousePickerActive = true;
+		GUI_3DS_TakeHouseChoice();
+		Input_History_Clear();
 #endif
 		for (houseID = HOUSE_INVALID; houseID == HOUSE_INVALID; sleepIdle()) {
 			uint16 key = GUI_Widget_HandleEvents(w);
@@ -1892,6 +1978,9 @@ uint8 GUI_PickHouse(void)
 
 		if (g_debugSkipDialogs || g_debugScenario) {
 			Debug("Skipping House selection confirmation.\n");
+#ifdef __3DS__
+			GUI_3DS_SetHouseConfirm(HOUSE_INVALID);
+#endif
 			break;
 		}
 
@@ -2364,7 +2453,9 @@ void GUI_ChangeSelectionType(uint16 selectionType)
 
 		if (g_table_selectionType[oldSelectionType].variable_04 && g_table_selectionType[selectionType].variable_06) {
 			g_viewport_forceRedraw = true;
+#ifndef __3DS__
 			g_viewport_fadein = true;
+#endif
 
 			GUI_DrawInterfaceAndRadar(SCREEN_0);
 		}
@@ -2953,7 +3044,7 @@ FactoryResult GUI_DisplayFactoryWindow(bool isConstructionYard, bool isStarPort,
 #ifdef __3DS__
 	GUI_3DS_FactoryBegin();
 #endif
-	for (g_factoryWindowResult = FACTORY_CONTINUE; g_factoryWindowResult == FACTORY_CONTINUE; sleepIdle()) {
+	for (g_factoryWindowResult = FACTORY_CONTINUE; g_factoryWindowResult == FACTORY_CONTINUE; ) {
 		uint16 event;
 
 		GUI_DrawCredits(g_playerHouseID, 0);
@@ -2962,15 +3053,23 @@ FactoryResult GUI_DisplayFactoryWindow(bool isConstructionYard, bool isStarPort,
 
 #ifdef __3DS__
 		GUI_3DS_FactoryEvents();
+		if (g_factoryWindowResult != FACTORY_CONTINUE) break;
 #endif
 		event = GUI_Widget_HandleEvents(g_widgetInvoiceTail);
 
 		if (event == 0x6E) GUI_Production_ResumeGame_Click(NULL);
 
 		GUI_PaletteAnimate();
+
+		if (g_factoryWindowResult != FACTORY_CONTINUE) break;
+		sleepIdle();
 	}
 
 	GUI_DrawCredits(g_playerHouseID, 1);
+
+#ifdef __3DS__
+	GUI_3DS_CacheFactoryPreview(NULL);
+#endif
 
 	GFX_Screen_SetActive(oldScreenID);
 
@@ -3027,6 +3126,27 @@ char *GUI_String_Get_ByIndex(int16 stringID)
 			stringID = (g_gameConfig.autoScroll != 0) ? STR_ON : STR_OFF;
 			break;
 
+		case -15:
+			return (g_config.language == LANGUAGE_LITHUANIAN) ? "Lietuvių" : "English";
+
+		case -16:
+			return (g_config.language == LANGUAGE_LITHUANIAN) ? "Kalba" : "Language";
+
+		case -17: {
+			static const uint16 cursorSpeedStrings[] = {
+				STR_SLOWEST,
+				STR_SLOW,
+				STR_NORMAL,
+				STR_FAST,
+				STR_FASTEST
+			};
+			uint16 cs = (g_gameConfig.cursorSpeed <= 4) ? g_gameConfig.cursorSpeed : 2;
+			stringID = cursorSpeedStrings[cs];
+		} break;
+
+		case -18:
+			return (g_config.language == LANGUAGE_LITHUANIAN) ? "Kursoriaus greitis" : "Cursor Speed";
+
 		default: break;
 	}
 
@@ -3047,7 +3167,7 @@ static void GUI_StrategicMap_AnimateArrows(void)
 
 static void GUI_StrategicMap_AnimateSelected(uint16 selected, StrategicMapData *data)
 {
-	char key[4];
+	char key[8];
 	char buffer[81];
 	int16 x;
 	int16 y;
@@ -3131,6 +3251,7 @@ static void GUI_StrategicMap_SetRegionDone(uint16 region, bool set)
 	}
 }
 
+#ifndef __3DS__
 static int16 GUI_StrategicMap_ClickedRegion(void)
 {
 	uint16 key;
@@ -3145,24 +3266,46 @@ static int16 GUI_StrategicMap_ClickedRegion(void)
 	return g_fileRgnclkCPS[(g_mouseClickY - 24) * 304 + g_mouseClickX - 8];
 }
 
+#endif
+
 static bool GUI_StrategicMap_FastForwardToggleWithESC(void)
 {
-	if (Input_Keyboard_NextKey() == 0) return s_strategicMapFastForward;
-
-	if (Input_WaitForValidInput() != 0x1B) return s_strategicMapFastForward;
-
-	s_strategicMapFastForward = !s_strategicMapFastForward;
-
-	Input_History_Clear();
-
+	if (Input_Keyboard_NextKey() != 0 && Input_WaitForValidInput() == 0x1B) {
+#ifdef __3DS__
+		s_strategicMapFastForward = true;
+#else
+		s_strategicMapFastForward = !s_strategicMapFastForward;
+#endif
+		Input_History_Clear();
+	}
 	return s_strategicMapFastForward;
 }
 
 static void GUI_StrategicMap_DrawText(const char *string)
 {
+#ifdef __3DS__
+	GUI_3DS_StrategicSetText(string);
+	for (int step = 1; step <= 13 && !s_strategicMapFastForward; step++) {
+		GUI_3DS_StrategicTextStep(step);
+		for (g_timerTimeout = 3; g_timerTimeout != 0; sleepIdle()) {
+			if (GUI_StrategicMap_FastForwardToggleWithESC()) break;
+		}
+	}
+	GUI_3DS_StrategicTextStep(13);
+#else
 	static uint32 l_timerNext = 0;
 	Screen oldScreenID;
 	uint16 y;
+
+	if (s_strategicMapFastForward) {
+		oldScreenID = GFX_Screen_SetActive(SCREEN_1);
+		GUI_Screen_Copy(8, 165, 8, 186, 24, 14, SCREEN_0, SCREEN_1);
+		GUI_DrawFilledRectangle(64, 172, 255, 185, GFX_GetPixel(64, 186));
+		GUI_DrawText_Wrapper(string, 64, 175, 12, 0, 0x12);
+		GUI_Screen_Copy(8, 172, 8, 165, 24, 14, SCREEN_1, SCREEN_0);
+		GFX_Screen_SetActive(oldScreenID);
+		return;
+	}
 
 	oldScreenID = GFX_Screen_SetActive(SCREEN_1);
 
@@ -3172,7 +3315,10 @@ static void GUI_StrategicMap_DrawText(const char *string)
 
 	GUI_DrawText_Wrapper(string, 64, 175, 12, 0, 0x12);
 
-	while (g_timerGUI + 90 < l_timerNext) sleepIdle();
+	while (g_timerGUI + 90 < l_timerNext) {
+		if (GUI_StrategicMap_FastForwardToggleWithESC()) break;
+		sleepIdle();
+	}
 
 	for (y = 185; y > 172; y--) {
 		GUI_Screen_Copy(8, y, 8, 165, 24, 14, SCREEN_1, SCREEN_0);
@@ -3180,11 +3326,16 @@ static void GUI_StrategicMap_DrawText(const char *string)
 		for (g_timerTimeout = 3; g_timerTimeout != 0; sleepIdle()) {
 			if (GUI_StrategicMap_FastForwardToggleWithESC()) break;
 		}
+		if (s_strategicMapFastForward) {
+			GUI_Screen_Copy(8, 172, 8, 165, 24, 14, SCREEN_1, SCREEN_0);
+			break;
+		}
 	}
 
 	l_timerNext = g_timerGUI + 90;
 
 	GFX_Screen_SetActive(oldScreenID);
+#endif
 }
 
 static uint16 GUI_StrategicMap_ScenarioSelection(uint16 campaignID)
@@ -3246,8 +3397,31 @@ static uint16 GUI_StrategicMap_ScenarioSelection(uint16 campaignID)
 	GUI_Mouse_Show_Safe();
 	Input_History_Clear();
 
+#ifdef __3DS__
+	uint32 selectableRegions = 0;
+	for (i = 0; i < count; i++) {
+		if (data[i].index > 0 && data[i].index < 32) {
+			selectableRegions |= (uint32)1 << data[i].index;
+		}
+	}
+	GUI_3DS_StrategicSelecting(selectableRegions);
+	for (i = 0; i < count; i++) {
+		if (data[i].index > 0 && data[i].index < 32) {
+			GUI_3DS_StrategicAddArrow(data[i].index, data[i].offsetX, data[i].offsetY);
+		}
+	}
+#endif
+
+	region = 0;
+	scenarioID = 0;
+
 	for (loop = true; loop; sleepIdle()) {
+#ifdef __3DS__
+		GUI_StrategicMap_AnimateArrows();
+		region = GUI_3DS_StrategicTakeRegion();
+#else
 		region = GUI_StrategicMap_ClickedRegion();
+#endif
 
 		if (region == 0) continue;
 
@@ -3261,6 +3435,10 @@ static uint16 GUI_StrategicMap_ScenarioSelection(uint16 campaignID)
 			}
 		}
 	}
+
+#ifdef __3DS__
+	GUI_3DS_StrategicSelecting(0);
+#endif
 
 	GUI_StrategicMap_SetRegionDone(region, true);
 
@@ -3370,7 +3548,8 @@ static void GUI_StrategicMap_ShowProgression(uint16 campaignID)
 				sprintf(key, "%sTXT%d", g_languageSuffixes[g_config.language], region);
 
 				if (Ini_GetString(category, key, NULL, buffer, sizeof(buffer), g_fileRegionINI) != NULL) {
-					GUI_StrategicMap_DrawText(buffer);
+					const char *text = (g_config.language == LANGUAGE_LITHUANIAN) ? Strings_LT_TranslateRegionText(buffer) : buffer;
+					GUI_StrategicMap_DrawText(text);
 				}
 
 				GUI_StrategicMap_DrawRegion(houseID, region, true);
@@ -3399,6 +3578,10 @@ uint16 GUI_StrategicMap_Show(uint16 campaignID, bool win)
 
 	Timer_Sleep(10);
 	Music_Play(0x1D);
+
+#ifdef __3DS__
+	GUI_3DS_StrategicBegin();
+#endif
 
 	memset(palette, 0, 256 * 3);
 
@@ -3512,12 +3695,18 @@ uint16 GUI_StrategicMap_Show(uint16 campaignID, bool win)
 	GUI_Mouse_Show_Safe();
 
 	if (*g_regions >= campaignID) {
+#ifndef __3DS__
 		GUI_StrategicMap_DrawText(String_Get_ByIndex(STR_SELECT_YOUR_NEXT_REGION));
+#endif
 
 		scenarioID = GUI_StrategicMap_ScenarioSelection(campaignID);
 	} else {
 		scenarioID = 0;
 	}
+
+#ifdef __3DS__
+	GUI_3DS_StrategicEnd();
+#endif
 
 	Driver_Music_FadeOut();
 
@@ -3640,6 +3829,10 @@ void GUI_FactoryWindow_DrawDetails(void)
 		}
 	}
 
+#ifdef __3DS__
+	GUI_3DS_CacheFactoryPreview(GFX_Screen_Get_ByIndex(SCREEN_1));
+#endif
+
 	GUI_Mouse_Hide_Safe();
 	GUI_Screen_Copy(16, 48, 16, 48, 23, 112, SCREEN_1, oldScreenID);
 	GUI_Mouse_Show_Safe();
@@ -3699,6 +3892,9 @@ void GUI_FactoryWindow_UpdateDetails(const FactoryWindowItem *item)
 	}
 	GUI_Mouse_Hide_Safe();
 	GUI_Screen_Copy(16, y, 16, 99, 23, 9, SCREEN_1, SCREEN_ACTIVE);
+#ifdef __3DS__
+	GUI_3DS_UpdateFactoryPreviewOverlay(GFX_Screen_Get_ByIndex(SCREEN_1), y);
+#endif
 	GUI_Mouse_Show_Safe();
 }
 
@@ -4501,7 +4697,7 @@ void GUI_HallOfFame_Show(uint16 score)
 
 	w = GUI_HallOfFame_CreateButtons(data);
 #ifdef __3DS__
- GUI_3DS_SetResultsButtons(w);
+ GUI_3DS_SetResultsButtons(w, score != 0xFFFF);
 #endif
 
 	Input_History_Clear();
@@ -4520,7 +4716,7 @@ void GUI_HallOfFame_Show(uint16 score)
 	}
 
 	#ifdef __3DS__
- GUI_3DS_SetResultsButtons(NULL);
+ GUI_3DS_SetResultsButtons(NULL, false);
  GUI_3DS_SetResultsActive(previousResults);
 #endif
  GUI_HallOfFame_DeleteButtons(w);

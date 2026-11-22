@@ -81,71 +81,80 @@ WindowDesc g_gameControlWindowDesc = {
 	/* index       */ 16,
 	/* stringID    */ STR_GAME_CONTROLS,
 	/* addArrows   */ false,
-	/* widgetCount */ 6,
+	/* widgetCount */ 8,
 	{ /* widgets */
 		{ /* 0 */
 		/* stringID      */ -10, /* Music state. */
 		/* offsetX       */ 152,
-		/* offsetY       */ 22,
+		/* offsetY       */ 18,
 		/* width         */ 80,
-		/* height        */ 15,
+		/* height        */ 12,
 		/* labelStringID */ STR_MUSIC_IS,
 		/* shortcut2     */ 0,
 		},
 		{ /* 1 */
 		/* stringID      */ -11, /* Sound state. */
 		/* offsetX       */ 152,
-		/* offsetY       */ 39,
+		/* offsetY       */ 32,
 		/* width         */ 80,
-		/* height        */ 15,
+		/* height        */ 12,
 		/* labelStringID */ STR_SOUNDS_ARE,
 		/* shortcut2     */ 0,
 		},
 		{ /* 2 */
 		/* stringID      */ -12, /* Game speed. */
 		/* offsetX       */ 152,
-		/* offsetY       */ 56,
+		/* offsetY       */ 46,
 		/* width         */ 80,
-		/* height        */ 15,
+		/* height        */ 12,
 		/* labelStringID */ STR_GAME_SPEED,
 		/* shortcut2     */ 0,
 		},
 		{ /* 3 */
-		/* stringID      */ -13, /* Hints state */
+		/* stringID      */ (uint16)-17, /* Cursor speed. */
 		/* offsetX       */ 152,
-		/* offsetY       */ 73,
+		/* offsetY       */ 60,
 		/* width         */ 80,
-		/* height        */ 15,
-		/* labelStringID */ STR_HINTS_ARE,
+		/* height        */ 12,
+		/* labelStringID */ (uint16)-18, /* Cursor speed label */
 		/* shortcut2     */ 0,
 		},
 		{ /* 4 */
-		/* stringID      */ -14, /* Autoscroll state */
+		/* stringID      */ -13, /* Hints state */
 		/* offsetX       */ 152,
-		/* offsetY       */ 90,
+		/* offsetY       */ 74,
 		/* width         */ 80,
-		/* height        */ 15,
-		/* labelStringID */ STR_AUTO_SCROLL_IS,
+		/* height        */ 12,
+		/* labelStringID */ STR_HINTS_ARE,
 		/* shortcut2     */ 0,
 		},
 		{ /* 5 */
+		/* stringID      */ -14, /* Autoscroll state */
+		/* offsetX       */ 152,
+		/* offsetY       */ 88,
+		/* width         */ 80,
+		/* height        */ 12,
+		/* labelStringID */ STR_AUTO_SCROLL_IS,
+		/* shortcut2     */ 0,
+		},
+		{ /* 6 */
+		/* stringID      */ (uint16)-15, /* Language state */
+		/* offsetX       */ 152,
+		/* offsetY       */ 102,
+		/* width         */ 80,
+		/* height        */ 12,
+		/* labelStringID */ (uint16)-16, /* Language label */
+		/* shortcut2     */ 0,
+		},
+		{ /* Previous */
 		/* stringID      */ STR_PREVIOUS,
 		/* offsetX       */ 96,
-		/* offsetY       */ 110,
+		/* offsetY       */ 117,
 		/* width         */ 136,
-		/* height        */ 15,
+		/* height        */ 13,
 		/* labelStringID */ STR_NULL,
 		/* shortcut2     */ 110,
 		},
-		{ /* 6 */
-		/* stringID      */ STR_NULL,
-		/* offsetX       */ 0,
-		/* offsetY       */ 0,
-		/* width         */ 0,
-		/* height        */ 0,
-		/* labelStringID */ STR_NULL,
-		/* shortcut2     */ 0,
-		}
 	}
 };
 

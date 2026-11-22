@@ -61,6 +61,7 @@
 #ifdef __3DS__
 #include "unit_3ds.h"
 #include "gui/gui_3ds.h"
+#include "wsa.h"
 #endif
 #include "pool/team.h"
 #include "scenario.h"
@@ -365,6 +366,7 @@ static void GameLoop_LevelEnd(void)
 	levelEndTimer = g_timerGame + 300;
 }
 
+#ifndef __3DS__
 static void GameLoop_DrawMenu(const char **strings)
 {
 	WidgetProperties *props;
@@ -392,6 +394,7 @@ static void GameLoop_DrawMenu(const char **strings)
 
 	Input_History_Clear();
 }
+#endif
 
 static void GameLoop_DrawText2(const char *string, uint16 left, uint16 top, uint8 fgColourNormal, uint8 fgColourSelected, uint8 bgColour)
 {
@@ -697,12 +700,21 @@ void GameLoop_ResetMenu(void)
  */
 static void GameLoop_GameIntroAnimationMenu(void)
 {
+#ifdef __3DS__
 	static const uint16 mainMenuStrings[][6] = {
-		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL, STR_NULL}, /* Neither HOF nor save. */
-		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL, STR_NULL}, /* Has a save game. */
-		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_HALL_OF_FAME, STR_EXIT_GAME, STR_NULL}, /* Has a HOF. */
-		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_HALL_OF_FAME, STR_EXIT_GAME, STR_NULL}  /* Has a HOF and a save game. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_GAME_CONTROLS, STR_EXIT_GAME, STR_NULL, STR_NULL}, /* Neither HOF nor save. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_GAME_CONTROLS, STR_EXIT_GAME, STR_NULL, STR_NULL}, /* Has a save game. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_HALL_OF_FAME, STR_GAME_CONTROLS, STR_EXIT_GAME, STR_NULL}, /* Has a HOF. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_HALL_OF_FAME, STR_GAME_CONTROLS, STR_EXIT_GAME, STR_NULL}  /* Has a HOF and a save game. */
 	};
+#else
+	static const uint16 mainMenuStrings[][6] = {
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_GAME_CONTROLS, STR_EXIT_GAME, STR_NULL}, /* Neither HOF nor save. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_GAME_CONTROLS, STR_EXIT_GAME, STR_NULL}, /* Has a save game. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_HALL_OF_FAME, STR_GAME_CONTROLS, STR_EXIT_GAME}, /* Has a HOF. */
+		{STR_PLAY_A_GAME, STR_LOAD_GAME, STR_REPLAY_INTRODUCTION, STR_HALL_OF_FAME, STR_GAME_CONTROLS, STR_EXIT_GAME}  /* Has a HOF and a save game. */
+	};
+#endif
 
 	bool loadGame = false;
 	static bool drawMenu = true;
@@ -802,9 +814,19 @@ static void GameLoop_GameIntroAnimationMenu(void)
 			drawMenu = true;
 			break;
 
+		case STR_GAME_CONTROLS:
+			GFX_SetPalette(g_palette1);
+			GUI_Widget_GameControls_Click(NULL);
+			GameOptions_Save();
+			GFX_SetPalette(g_palette2);
+			drawMenu = true;
+			break;
+
 		case STR_LOAD_GAME:
 			GUI_Mouse_Hide_Safe();
+#ifndef __3DS__
 			GUI_SetPaletteAnimated(g_palette2, 30);
+#endif
 			GUI_ClearScreen(SCREEN_0);
 			GUI_Mouse_Show_Safe();
 
@@ -830,13 +852,13 @@ static void GameLoop_GameIntroAnimationMenu(void)
 	if (drawMenu) {
 		uint16 i;
 
-		g_widgetProperties[21].height = 0;
+		g_widgetProperties[21].height = 6;
 
 		for (i = 0; i < 6; i++) {
 			strings[i] = NULL;
 
 			if (mainMenuStrings[index][i] == 0) {
-				if (g_widgetProperties[21].height == 0) g_widgetProperties[21].height = i;
+				if (g_widgetProperties[21].height == 6) g_widgetProperties[21].height = i;
 				continue;
 			}
 
@@ -869,11 +891,15 @@ static void GameLoop_GameIntroAnimationMenu(void)
 
 		GUI_Screen_Copy(0, 0, 0, 0, SCREEN_WIDTH / 8, SCREEN_HEIGHT, SCREEN_1, SCREEN_0);
 
+#ifdef __3DS__
+		GUI_3DS_SetTitleLabels(strings);
+		GUI_3DS_SetTitleActive(true);
+		GUI_SetPaletteAnimated(g_palette1, 30);
+		Widget_SetCurrentWidget(13);
+#else
 		GUI_SetPaletteAnimated(g_palette1, 30);
 
-#ifndef __3DS__
 		GUI_DrawText_Wrapper("V1.07", 319, 192, 133, 0, 0x231, 0x39);
-#endif
 		GUI_DrawText_Wrapper(NULL, 0, 0, 0, 0, 0x22);
 
 		Widget_SetCurrentWidget(13);
@@ -881,9 +907,6 @@ static void GameLoop_GameIntroAnimationMenu(void)
 		GUI_Widget_DrawBorder(13, 2, 1);
 
 		GameLoop_DrawMenu(strings);
-#ifdef __3DS__
-		GUI_3DS_SetTitleLabels(strings);
-		GUI_3DS_SetTitleActive(true);
 #endif
 
 		GUI_Mouse_Show_Safe();
@@ -997,6 +1020,28 @@ static void InGame_Numpad_Move(uint16 key)
 	}
 }
 
+#ifdef __3DS__
+static void Game_3DS_CacheSpecialPortraits(void)
+{
+	static const char * const names[3] = { "GOLD-BB.WSA", "FREMEN.WSA", "SABOTURE.WSA" };
+	uint8 *wsaBuf = (uint8 *)GFX_Screen_Get_ByIndex(SCREEN_2);
+	uint32 wsaBufSize = GFX_Screen_GetSize_ByIndex(SCREEN_2);
+	uint8 *frameBuf = (uint8 *)GFX_Screen_Get_ByIndex(SCREEN_1);
+	if (wsaBuf == NULL || frameBuf == NULL) return;
+
+	for (int i = 0; i < 3; i++) {
+		if (!File_Exists(names[i])) continue;
+		void *wsa = WSA_LoadFile(names[i], wsaBuf, wsaBufSize, false);
+		if (wsa == NULL) continue;
+		memset(frameBuf, 0, SCREEN_WIDTH * SCREEN_HEIGHT);
+		if (WSA_DisplayFrame(wsa, 0, 0, 0, SCREEN_1)) {
+			GUI_3DS_CacheSpecialPortrait((uint8)i, frameBuf, 184, 112);
+		}
+		WSA_Unload(wsa);
+	}
+}
+#endif
+
 /**
  * Main game loop.
  */
@@ -1005,11 +1050,17 @@ static void GameLoop_Main(void)
 	static uint32 l_timerNext = 0;
 	static uint32 l_timerUnitStatus = 0;
 	static int16  l_selectionState = -2;
+#ifdef __3DS__
+	static uint32 l_lastBattleTick = 0xFFFFFFFF;
+#endif
 
 	uint16 key;
 
 	String_Init();
 	Sprites_Init();
+#ifdef __3DS__
+	Game_3DS_CacheSpecialPortraits();
+#endif
 
 #ifdef MUNT
 	if (IniFile_GetInteger("mt32midi", 1) != 0) Music_InitMT32();
@@ -1214,29 +1265,36 @@ static void GameLoop_Main(void)
 		key = GUI_Widget_HandleEvents(g_widgetLinkedListHead);
 
 		if (g_selectionType == SELECTIONTYPE_TARGET || g_selectionType == SELECTIONTYPE_PLACE || g_selectionType == SELECTIONTYPE_UNIT || g_selectionType == SELECTIONTYPE_STRUCTURE) {
-			if (g_unitSelected != NULL) {
-				if (l_timerUnitStatus < g_timerGame) {
-					Unit_DisplayStatusText(g_unitSelected);
-					l_timerUnitStatus = g_timerGame + 300;
+#ifdef __3DS__
+			if (g_timerGUI != l_lastBattleTick || g_viewport_forceRedraw || key != 0 || l_selectionState != g_selectionState) {
+				l_lastBattleTick = g_timerGUI;
+#endif
+				if (g_unitSelected != NULL) {
+					if (l_timerUnitStatus < g_timerGame) {
+						Unit_DisplayStatusText(g_unitSelected);
+						l_timerUnitStatus = g_timerGame + 300;
+					}
+
+					if (g_selectionType != SELECTIONTYPE_TARGET) {
+						g_selectionPosition = Tile_PackTile(Tile_Center(g_unitSelected->o.position));
+					}
 				}
 
-				if (g_selectionType != SELECTIONTYPE_TARGET) {
-					g_selectionPosition = Tile_PackTile(Tile_Center(g_unitSelected->o.position));
-				}
+				GUI_Widget_ActionPanel_Draw(false);
+
+				InGame_Numpad_Move(key);
+
+				GUI_DrawCredits(g_playerHouseID, 0);
+
+				GameLoop_Team();
+				GameLoop_Unit();
+				GameLoop_Structure();
+				GameLoop_House();
+
+				GUI_DrawScreen(SCREEN_0);
+#ifdef __3DS__
 			}
-
-			GUI_Widget_ActionPanel_Draw(false);
-
-			InGame_Numpad_Move(key);
-
-			GUI_DrawCredits(g_playerHouseID, 0);
-
-			GameLoop_Team();
-			GameLoop_Unit();
-			GameLoop_Structure();
-			GameLoop_House();
-
-			GUI_DrawScreen(SCREEN_0);
+#endif
 		}
 
 		GUI_DisplayText(NULL, 0);
@@ -1244,8 +1302,6 @@ static void GameLoop_Main(void)
 		if (g_running && !g_debugScenario) {
 			GameLoop_LevelEnd();
 		}
-
-		sleepIdle();
 
 		if (!g_running) break;
 	}

@@ -233,12 +233,14 @@ static void GameLoop_PlaySubtitle(uint8 animation)
 			GUI_3DS_SetSubtitle(String_Get_ByIndex(subtitle->stringID));
 		}
 	}
-	if (g_enableVoices != 0 && s_feedback_base_index != 0xFFFF && s_houseAnimation_currentSubtitle != 0 && g_config.language == LANGUAGE_ENGLISH) {
+	if (g_enableVoices != 0 && s_feedback_base_index != 0xFFFF && s_houseAnimation_currentSubtitle != 0 &&
+	    (g_config.language == LANGUAGE_ENGLISH || g_config.language == LANGUAGE_LITHUANIAN)) {
 		uint16 feedback_index = s_feedback_base_index + s_houseAnimation_currentSubtitle;
 		Sound_Output_Feedback(feedback_index);
 	}
 #else
-	if (g_enableVoices != 0 && s_feedback_base_index != 0xFFFF && s_houseAnimation_currentSubtitle != 0 && g_config.language == LANGUAGE_ENGLISH) {
+	if (g_enableVoices != 0 && s_feedback_base_index != 0xFFFF && s_houseAnimation_currentSubtitle != 0 &&
+	    (g_config.language == LANGUAGE_ENGLISH || g_config.language == LANGUAGE_LITHUANIAN)) {
 		/* specific code for Intro
 		 * @see GameLoop_GameIntroAnimation() */
 		uint16 feedback_index = s_feedback_base_index + s_houseAnimation_currentSubtitle;
@@ -1523,13 +1525,13 @@ static void GameLoop_3DS_PlanetToTopTransition(void)
 	GUI_3DS_SetLaunchActive(true);
 	Input_History_Clear();
 
-	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
-	memset(g_bottomScreenUIMask, 0, sizeof(g_bottomScreenUIMask));
-
-	GUI_SetPaletteAnimated(g_palette2, 15);
 	memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
 	memset(g_bottomScreenBuffer, 0, BOTTOM_WIDTH * BOTTOM_HEIGHT);
+	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
+	memset(g_bottomScreenUIMask, 0, sizeof(g_bottomScreenUIMask));
 	GFX_ClearScreen(SCREEN_0);
+	GFX_SetPalette(g_palette2);
+
 	Input_History_Clear();
 	GUI_3DS_SetLaunchActive(false);
 }

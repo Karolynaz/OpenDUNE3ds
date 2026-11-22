@@ -71,6 +71,9 @@ static const SaveLoadDesc s_saveUnitNew[] = {
  */
 bool Unit_Load(FILE *fp, uint32 length)
 {
+	const uint32 recordSize = SaveLoad_GetLength(s_saveUnit);
+	if (length % recordSize != 0) return false;
+
 	while (length > 0) {
 		Unit *u;
 		Unit ul;
@@ -80,7 +83,11 @@ bool Unit_Load(FILE *fp, uint32 length)
 		/* Read the next Structure from disk */
 		if (!SaveLoad_Load(s_saveUnit, fp, &ul)) return false;
 
-		length -= SaveLoad_GetLength(s_saveUnit);
+		length -= recordSize;
+
+		/* Old DOS saves can contain a phantom Trike with house ID 13. */
+		if (ul.o.houseID == 13) continue;
+		if (ul.o.index >= UNIT_INDEX_MAX || ul.o.type >= UNIT_MAX || ul.o.houseID >= HOUSE_MAX) return false;
 
 		ul.o.script.scriptInfo = g_scriptUnit;
 		ul.o.script.script = g_scriptUnit->start + (size_t)ul.o.script.script;
@@ -90,11 +97,6 @@ bool Unit_Load(FILE *fp, uint32 length)
 
 		/* In case the new ODUN chunk is not available, Ordos is always the one who deviated */
 		if (ul.deviated != 0) ul.deviatedHouse = HOUSE_ORDOS;
-
-		/* ENHANCEMENT -- Due to wrong parameter orders of Unit_Create in original Dune2,
-		 *  it happened that units exists with houseID 13. This in fact are Trikes with
-		 *  the wrong houseID. So remove those units completely from the savegame. */
-		if (ul.o.houseID == 13) continue;
 
 		/* Get the Structure from the pool */
 		u = Unit_Get_ByIndex(ul.o.index);
@@ -145,6 +147,9 @@ bool Unit_Save(FILE *fp)
  */
 bool UnitNew_Load(FILE *fp, uint32 length)
 {
+	const uint32 recordSize = SaveLoad_GetLength(s_saveUnitNewIndex) + SaveLoad_GetLength(s_saveUnitNew);
+	if (length % recordSize != 0) return false;
+
 	while (length > 0) {
 		Unit *u;
 		Object o;
@@ -152,16 +157,16 @@ bool UnitNew_Load(FILE *fp, uint32 length)
 		/* Read the next index from disk */
 		if (!SaveLoad_Load(s_saveUnitNewIndex, fp, &o)) return false;
 
-		length -= SaveLoad_GetLength(s_saveUnitNewIndex);
+		length -= recordSize;
 
 		/* Get the Unit from the pool */
+		if (o.index >= UNIT_INDEX_MAX) return false;
 		u = Unit_Get_ByIndex(o.index);
 		if (u == NULL) return false;
 
 		/* Read the "new" information for this unit */
 		if (!SaveLoad_Load(s_saveUnitNew, fp, u)) return false;
 
-		length -= SaveLoad_GetLength(s_saveUnitNew);
 	}
 	if (length != 0) return false;
 

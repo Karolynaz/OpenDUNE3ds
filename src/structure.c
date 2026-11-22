@@ -15,6 +15,9 @@
 #include "explosion.h"
 #include "gfx.h"
 #include "gui/gui.h"
+#ifdef __3DS__
+#include "gui/gui_3ds.h"
+#endif
 #include "gui/widget.h"
 #include "house.h"
 #include "map.h"
@@ -166,10 +169,15 @@ void GameLoop_Structure(void)
 						s->o.hitpoints += 3;
 					}
 
-					if (s->o.hitpoints > si->o.hitpoints) {
+					if (s->o.hitpoints >= si->o.hitpoints) {
 						s->o.hitpoints = si->o.hitpoints;
 						s->o.flags.s.repairing = false;
 						s->o.flags.s.onHold = false;
+#ifdef __3DS__
+						if (s->o.houseID == g_playerHouseID) {
+							GUI_DisplayText(GUI_3DS_IsLithuanian() ? "Remontas baigtas." : "Repairing done.", 2);
+						}
+#endif
 					}
 				} else {
 					s->o.flags.s.repairing = false;
@@ -837,6 +845,11 @@ void Structure_ActivateSpecial(Structure *s)
 			Unit *u;
 			tile32 position;
 
+			if (g_unitHouseMissile != NULL) {
+				if (h->flags.human) GUI_ChangeSelectionType(SELECTIONTYPE_TARGET);
+				return;
+			}
+
 			position.x = 0xFFFF;
 			position.y = 0xFFFF;
 
@@ -847,7 +860,13 @@ void Structure_ActivateSpecial(Structure *s)
 			g_unitHouseMissile = u;
 			if (u == NULL) break;
 
+#ifdef __3DS__
+			if (!h->flags.human) {
+				s->countDown = g_table_houseInfo[s->o.houseID].specialCountDown;
+			}
+#else
 			s->countDown = g_table_houseInfo[s->o.houseID].specialCountDown;
+#endif
 
 			if (!h->flags.human) {
 				PoolFindStruct find;
@@ -878,8 +897,13 @@ void Structure_ActivateSpecial(Structure *s)
 				return;
 			}
 
+#ifdef __3DS__
+			/* Let the player pan and choose the target manually instead of rushing a 7s auto-launch. */
+			g_houseMissileCountdown = 0;
+#else
 			/* Give the user 7 seconds to select their target */
 			g_houseMissileCountdown = 7;
+#endif
 
 			GUI_ChangeSelectionType(SELECTIONTYPE_TARGET);
 		} break;
@@ -1375,6 +1399,7 @@ void Structure_Remove(Structure *s)
  * @return True if and only if there are enough slabs available on the map to
  *  build requested structure.
  */
+#ifndef __3DS__
 static bool Structure_CheckAvailableConcrete(uint16 structureType, uint8 houseID)
 {
 	const StructureInfo *si;
@@ -1406,6 +1431,7 @@ static bool Structure_CheckAvailableConcrete(uint16 structureType, uint8 houseID
 
 	return false;
 }
+#endif
 
 /**
  * Cancel the building of object for given structure.
@@ -1552,7 +1578,9 @@ bool Structure_BuildObject(Structure *s, uint16 objectType)
 		if (objectType == 0xFFFF) {
 			FactoryResult res;
 
+#ifndef __3DS__
 			Sprites_UnloadTiles();
+#endif
 
 			memmove(g_palette1, g_paletteActive, 256 * 3);
 
@@ -1604,6 +1632,7 @@ bool Structure_BuildObject(Structure *s, uint16 objectType)
 
 						s->objectType = objectType;
 
+#ifndef __3DS__
 						if (!g_factoryWindowConstructionYard) continue;
 
 						if (Structure_CheckAvailableConcrete(objectType, s->o.houseID)) continue;
@@ -1613,6 +1642,9 @@ bool Structure_BuildObject(Structure *s, uint16 objectType)
 						s->objectType = objectType;
 
 						return false;
+#else
+						continue;
+#endif
 					}
 
 					g_validateStrictIfZero++;

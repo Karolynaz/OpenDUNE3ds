@@ -166,7 +166,7 @@ typedef struct WindowDesc {
 		uint16 height;                                      /*!< Height of the Widget. */
 		uint16 labelStringId;                               /*!< Label of the Widget. */
 		uint16 shortcut2;                                   /*!< The shortcut to trigger the Widget. */
-	} widgets[7];                                           /*!< The Widgets belonging to the Window. */
+	} widgets[8];                                           /*!< The Widgets belonging to the Window. */
 } WindowDesc;
 
 /** Widget properties. */
@@ -207,7 +207,7 @@ extern uint16 g_curWidgetHeight;
 extern uint8  g_curWidgetFGColourBlink;
 extern uint8  g_curWidgetFGColourNormal;
 
-extern Widget g_table_windowWidgets[9];
+extern Widget g_table_windowWidgets[10];
 
 
 extern Widget *GUI_Widget_GetNext(Widget *w);
@@ -249,6 +249,7 @@ extern bool GUI_Widget_Cancel_Click(Widget *w);
 extern bool GUI_Widget_Picture_Click(Widget *w);
 extern bool GUI_Widget_RepairUpgrade_Click(Widget *w);
 extern bool GUI_Widget_Options_Click(Widget *w);
+extern void GUI_Widget_GameControls_Click(Widget *w);
 extern bool GUI_Widget_SaveLoad_Click(bool save);
 extern bool GUI_Widget_HOF_ClearList_Click(Widget *w);
 extern bool GUI_Widget_HOF_Resume_Click(Widget *w);

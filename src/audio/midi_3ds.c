@@ -8,9 +8,19 @@
 #include "types.h"
 #include "midi.h"
 
-#define MIDI_AUDIO_CHANNEL 1
+#ifdef __3DS__
+#include "mt32mpu.h"
+#define TSF_IMPLEMENTATION
+#include "tsf.h"
+#define SAMPLE_RATE 22080
+#define SAMPLES_PER_MPU_TICK (SAMPLE_RATE / 120)
+#define BUFFER_SAMPLES (SAMPLES_PER_MPU_TICK * 4)
+#else
 #define SAMPLE_RATE 22050
 #define BUFFER_SAMPLES 256
+#endif
+
+#define MIDI_AUDIO_CHANNEL 1
 #define AUDIO_BUFFER_COUNT 4
 #define MAX_VOICES 32
 #define NUM_MIDI_CHANNELS 16
@@ -96,6 +106,36 @@ static ChannelState s_channels[NUM_MIDI_CHANNELS];
 
 static int16 s_sineTable[512];
 static uint32 s_noiseSeed = 0x12345678;
+
+#ifdef __3DS__
+static tsf *s_tsf = NULL;
+static int s_mpuSampleRem = 0;
+static RecursiveLock s_audioLock;
+static bool s_audioLockInit = false;
+static LightEvent s_audioEvent;
+static Thread s_audioThread = NULL;
+static volatile bool s_audioThreadRun = false;
+
+void midi_lock(void)
+{
+	if (!s_audioLockInit) {
+		RecursiveLock_Init(&s_audioLock);
+		s_audioLockInit = true;
+	}
+	RecursiveLock_Lock(&s_audioLock);
+}
+
+void midi_unlock(void)
+{
+	if (s_audioLockInit) RecursiveLock_Unlock(&s_audioLock);
+}
+
+static void midi_3ds_ndsp_callback(void *arg)
+{
+	(void)arg;
+	LightEvent_Signal(&s_audioEvent);
+}
+#endif
 
 static uint32 NextRandom(void)
 {
@@ -253,63 +293,54 @@ static void Voice_TriggerMelodic(Voice *v, uint8 chan, uint8 note, uint8 velocit
 
 	/* Configure envelope and waveform based on General MIDI patch category */
 	if (prog < 8) {
-		/* Piano: fast attack, medium decay, modest sustain */
 		v->waveform = WAVE_TRIANGLE;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.003f);
 		v->env_decay_rate = 0.70f / (SAMPLE_RATE * 0.25f);
 		v->env_sustain_level = 0.30f;
 		v->env_release_rate = 1.0f / (SAMPLE_RATE * 0.10f);
 	} else if (prog < 16) {
-		/* Chromatic Percussion (Vibes/Marimba): sharp attack, percussive decay to 0 */
 		v->waveform = WAVE_SINE;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.002f);
 		v->env_decay_rate = 1.0f / (SAMPLE_RATE * 0.35f);
 		v->env_sustain_level = 0.0f;
 		v->env_release_rate = 1.0f / (SAMPLE_RATE * 0.08f);
 	} else if (prog < 24) {
-		/* Organ: instantaneous attack, clean sustain */
 		v->waveform = WAVE_ORGAN;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.005f);
 		v->env_decay_rate = 0.30f / (SAMPLE_RATE * 0.10f);
 		v->env_sustain_level = 0.70f;
 		v->env_release_rate = 1.0f / (SAMPLE_RATE * 0.05f);
 	} else if (prog < 32) {
-		/* Guitar: fast pluck, decaying sustain */
 		v->waveform = WAVE_SAW;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.002f);
 		v->env_decay_rate = 0.80f / (SAMPLE_RATE * 0.20f);
 		v->env_sustain_level = 0.20f;
 		v->env_release_rate = 1.0f / (SAMPLE_RATE * 0.08f);
 	} else if (prog < 40) {
-		/* Bass: punchy low end, steady sustain */
 		v->waveform = WAVE_TRIANGLE;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.004f);
 		v->env_decay_rate = 0.50f / (SAMPLE_RATE * 0.15f);
 		v->env_sustain_level = 0.50f;
 		v->env_release_rate = 1.0f / (SAMPLE_RATE * 0.06f);
 	} else if (prog < 56) {
-		/* Strings / Ensemble: soft attack, natural sustain */
 		v->waveform = WAVE_STRINGS;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.025f);
 		v->env_decay_rate = 0.25f / (SAMPLE_RATE * 0.15f);
 		v->env_sustain_level = 0.65f;
 		v->env_release_rate = 1.0f / (SAMPLE_RATE * 0.10f);
 	} else if (prog < 64) {
-		/* Brass: crisp attack, bright sustain */
 		v->waveform = WAVE_SAW;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.010f);
 		v->env_decay_rate = 0.30f / (SAMPLE_RATE * 0.12f);
 		v->env_sustain_level = 0.65f;
 		v->env_release_rate = 1.0f / (SAMPLE_RATE * 0.08f);
 	} else if (prog < 80) {
-		/* Reed / Pipe (Flute/Sax): mellow square/sine tone */
 		v->waveform = (prog < 72) ? WAVE_SQUARE : WAVE_SINE;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.015f);
 		v->env_decay_rate = 0.30f / (SAMPLE_RATE * 0.12f);
 		v->env_sustain_level = 0.65f;
 		v->env_release_rate = 1.0f / (SAMPLE_RATE * 0.08f);
 	} else {
-		/* Synth Lead / Pad: bright saw/square */
 		v->waveform = WAVE_SAW;
 		v->env_attack_rate = 1.0f / (SAMPLE_RATE * 0.008f);
 		v->env_decay_rate = 0.35f / (SAMPLE_RATE * 0.15f);
@@ -323,17 +354,12 @@ static void Voice_TriggerMelodic(Voice *v, uint8 chan, uint8 note, uint8 velocit
 
 static Voice *AllocateVoice(void)
 {
-	/* 1. Look for inactive voice */
 	for (int i = 0; i < MAX_VOICES; i++) {
 		if (!s_voices[i].active) return &s_voices[i];
 	}
-
-	/* 2. Look for voice in release stage */
 	for (int i = 0; i < MAX_VOICES; i++) {
 		if (s_voices[i].env_stage == ENV_RELEASE) return &s_voices[i];
 	}
-
-	/* 3. Steal lowest volume voice */
 	int stealIdx = 0;
 	float lowest = 1000.0f;
 	for (int i = 0; i < MAX_VOICES; i++) {
@@ -347,6 +373,23 @@ static Voice *AllocateVoice(void)
 
 static void midi_3ds_render_buffer(int16 *buf, int num_samples)
 {
+#ifdef __3DS__
+	if (s_tsf != NULL) {
+		int offset = 0;
+		while (offset < num_samples) {
+			if (s_mpuSampleRem <= 0) {
+				MPU_Interrupt();
+				s_mpuSampleRem = SAMPLES_PER_MPU_TICK;
+			}
+			int chunk = num_samples - offset;
+			if (chunk > s_mpuSampleRem) chunk = s_mpuSampleRem;
+			tsf_render_short(s_tsf, buf + offset * 2, chunk, 0);
+			s_mpuSampleRem -= chunk;
+			offset += chunk;
+		}
+		return;
+	}
+#endif
 	memset(buf, 0, num_samples * sizeof(int16) * 2);
 
 	for (int vIdx = 0; vIdx < MAX_VOICES; vIdx++) {
@@ -366,7 +409,6 @@ static void midi_3ds_render_buffer(int16 *buf, int num_samples)
 		float masterGain = chanVol * chanExp * vel * 0.42f;
 
 		for (int s = 0; s < num_samples; s++) {
-			/* Envelope processing */
 			if (v->env_stage == ENV_ATTACK) {
 				v->env_level += v->env_attack_rate;
 				if (v->env_level >= 1.0f) {
@@ -393,7 +435,6 @@ static void midi_3ds_render_buffer(int16 *buf, int num_samples)
 				}
 			}
 
-			/* Drum pitch slide */
 			if (v->is_drum) {
 				v->drum_sample_count++;
 				if (v->drum_sample_count >= v->drum_sample_limit) {
@@ -406,7 +447,6 @@ static void midi_3ds_render_buffer(int16 *buf, int num_samples)
 				}
 			}
 
-			/* Waveform evaluation */
 			int32 rawSample = 0;
 			uint16 phase = v->phase;
 
@@ -432,14 +472,12 @@ static void midi_3ds_render_buffer(int16 *buf, int num_samples)
 					break;
 
 				case WAVE_ORGAN: {
-					/* Fundamental + 2nd harmonic */
 					int32 s1 = s_sineTable[phase >> 7];
 					int32 s2 = s_sineTable[((uint16)(phase * 2)) >> 7];
 					rawSample = (s1 * 3 + s2 * 2) / 5;
 				} break;
 
 				case WAVE_STRINGS: {
-					/* Sawtooth detuned chorus feel */
 					int32 saw1 = (int32)phase - 32768;
 					uint16 phase2 = phase + (phase >> 5);
 					int32 saw2 = (int32)phase2 - 32768;
@@ -450,7 +488,6 @@ static void midi_3ds_render_buffer(int16 *buf, int num_samples)
 				default: {
 					uint32 rnd = NextRandom();
 					rawSample = (int16)(rnd >> 16);
-					/* For snare, blend a little body tone */
 					if (v->drum_type == DRUM_SNARE) {
 						int32 body = s_sineTable[phase >> 7];
 						rawSample = (rawSample * 3 + body * 2) / 5;
@@ -475,18 +512,50 @@ static void midi_3ds_render_buffer(int16 *buf, int num_samples)
 	}
 }
 
-void midi_3ds_pump(void)
+static void midi_3ds_pump_locked(void)
 {
-	if (!s_midiInitialized) return;
-
 	for (int b = 0; b < AUDIO_BUFFER_COUNT; b++) {
 		if (s_waveBuf[b].status == NDSP_WBUF_DONE || s_waveBuf[b].status == NDSP_WBUF_FREE) {
 			midi_3ds_render_buffer(s_pcmBuffer[b], BUFFER_SAMPLES);
+#ifdef __3DS__
+			midi_unlock();
+#endif
 			DSP_FlushDataCache(s_pcmBuffer[b], BUFFER_SAMPLES * sizeof(int16) * 2);
 			s_waveBuf[b].status = NDSP_WBUF_FREE;
 			ndspChnWaveBufAdd(MIDI_AUDIO_CHANNEL, &s_waveBuf[b]);
+#ifdef __3DS__
+			midi_lock();
+#endif
 		}
 	}
+}
+
+#ifdef __3DS__
+static void midi_3ds_thread(void *arg)
+{
+	(void)arg;
+
+	while (s_audioThreadRun) {
+		midi_lock();
+		midi_3ds_pump_locked();
+		midi_unlock();
+
+		LightEvent_WaitTimeout(&s_audioEvent, 20000000LL);
+	}
+}
+#endif
+
+void midi_3ds_pump(void)
+{
+	if (!s_midiInitialized) return;
+#ifdef __3DS__
+	if (s_audioThread != NULL) return;
+	midi_lock();
+	midi_3ds_pump_locked();
+	midi_unlock();
+#else
+	midi_3ds_pump_locked();
+#endif
 }
 
 bool midi_init(void)
@@ -510,6 +579,25 @@ bool midi_init(void)
 		s_channels[c].sustain = false;
 	}
 
+#ifdef __3DS__
+	if (!s_audioLockInit) {
+		RecursiveLock_Init(&s_audioLock);
+		s_audioLockInit = true;
+	}
+	s_tsf = tsf_load_filename("sdmc:/3ds/dune3ds/gm.sf2");
+	if (s_tsf == NULL) s_tsf = tsf_load_filename("romfs:/gm.sf2");
+	if (s_tsf != NULL) {
+		tsf_set_output(s_tsf, TSF_STEREO_INTERLEAVED, SAMPLE_RATE, -3.0f);
+		tsf_set_max_voices(s_tsf, 24);
+		for (int c = 0; c < NUM_MIDI_CHANNELS; c++) {
+			tsf_channel_set_presetnumber(s_tsf, c, 0, (c == 9));
+			tsf_channel_midi_control(s_tsf, c, 7, 100);
+			tsf_channel_midi_control(s_tsf, c, 10, 64);
+		}
+		tsf_channel_set_bank_preset(s_tsf, 9, 128, 0);
+	}
+#endif
+
 	for (int b = 0; b < AUDIO_BUFFER_COUNT; b++) {
 		s_pcmBuffer[b] = (int16 *)linearAlloc(BUFFER_SAMPLES * sizeof(int16) * 2);
 		if (s_pcmBuffer[b] == NULL) {
@@ -517,6 +605,12 @@ bool midi_init(void)
 				linearFree(s_pcmBuffer[allocated]);
 				s_pcmBuffer[allocated] = NULL;
 			}
+#ifdef __3DS__
+			if (s_tsf != NULL) {
+				tsf_close(s_tsf);
+				s_tsf = NULL;
+			}
+#endif
 			ndspExit();
 			return false;
 		}
@@ -530,8 +624,8 @@ bool midi_init(void)
 
 	float mix[12];
 	memset(mix, 0, sizeof(mix));
-	mix[0] = 0.90f; // Left to Left
-	mix[1] = 0.90f; // Right to Right
+	mix[0] = 0.95f; /* Left to Left */
+	mix[1] = 0.95f; /* Right to Right */
 	ndspChnSetMix(MIDI_AUDIO_CHANNEL, mix);
 
 	for (int b = 0; b < AUDIO_BUFFER_COUNT; b++) {
@@ -543,7 +637,36 @@ bool midi_init(void)
 
 	s_midiInitialized = true;
 
+#ifdef __3DS__
+	s_mpuSampleRem = 0;
+	LightEvent_Init(&s_audioEvent, RESET_ONESHOT);
+	ndspSetCallback(midi_3ds_ndsp_callback, NULL);
+	midi_lock();
+	midi_3ds_pump_locked();
+	midi_unlock();
+
+	if (R_FAILED(APT_SetAppCpuTimeLimit(80))) {
+		APT_SetAppCpuTimeLimit(30);
+	}
+	s32 mainPrio = 0x30;
+	svcGetThreadPriority(&mainPrio, CUR_THREAD_HANDLE);
+	s32 audioPrio = mainPrio > 0x18 ? mainPrio - 4 : 0x18;
+	bool isNew3DS = false;
+	APT_CheckNew3DS(&isNew3DS);
+	s_audioThreadRun = true;
+	if (isNew3DS) {
+		s_audioThread = threadCreate(midi_3ds_thread, NULL, 32 * 1024, audioPrio, 2, false);
+	}
+	if (s_audioThread == NULL) {
+		s_audioThread = threadCreate(midi_3ds_thread, NULL, 32 * 1024, audioPrio, 1, false);
+	}
+	if (s_audioThread == NULL) {
+		s32 fallbackPrio = mainPrio > 0x18 ? mainPrio - 1 : mainPrio;
+		s_audioThread = threadCreate(midi_3ds_thread, NULL, 32 * 1024, fallbackPrio, 0, false);
+	}
+#else
 	midi_3ds_pump();
+#endif
 
 	return true;
 }
@@ -552,6 +675,21 @@ void midi_uninit(void)
 {
 	if (!s_midiInitialized) return;
 	s_midiInitialized = false;
+
+#ifdef __3DS__
+	ndspSetCallback(NULL, NULL);
+	if (s_audioThread != NULL) {
+		s_audioThreadRun = false;
+		LightEvent_Signal(&s_audioEvent);
+		threadJoin(s_audioThread, U64_MAX);
+		threadFree(s_audioThread);
+		s_audioThread = NULL;
+	}
+	if (s_tsf != NULL) {
+		tsf_close(s_tsf);
+		s_tsf = NULL;
+	}
+#endif
 
 	ndspChnReset(MIDI_AUDIO_CHANNEL);
 
@@ -575,10 +713,46 @@ void midi_send(uint32 data)
 	uint8 d1     = (uint8)((data >> 8) & 0xFF);
 	uint8 d2     = (uint8)((data >> 16) & 0xFF);
 
+#ifdef __3DS__
+	midi_lock();
+	if (s_tsf != NULL) {
+		switch (cmd) {
+			case 0x90:
+				if (d2 == 0) {
+					tsf_channel_note_off(s_tsf, chan, d1);
+				} else {
+					tsf_channel_note_on(s_tsf, chan, d1, (float)d2 / 127.0f);
+				}
+				break;
+			case 0x80:
+				tsf_channel_note_off(s_tsf, chan, d1);
+				break;
+			case 0xC0:
+				tsf_channel_set_presetnumber(s_tsf, chan, d1, (chan == 9));
+				break;
+			case 0xB0:
+				if (d1 == 121) {
+					tsf_channel_midi_control(s_tsf, chan, 121, 0);
+					if (chan == 9) tsf_channel_set_bank_preset(s_tsf, 9, 128, 0);
+				} else {
+					tsf_channel_midi_control(s_tsf, chan, d1, d2);
+				}
+				break;
+			case 0xE0: {
+				int wheel = (((int)d2 << 7) | (int)d1) & 0x3FFF;
+				tsf_channel_set_pitchwheel(s_tsf, chan, wheel);
+			} break;
+			default:
+				break;
+		}
+		midi_unlock();
+		return;
+	}
+#endif
+
 	switch (cmd) {
 		case 0x90: { /* Note On */
 			if (d2 == 0) {
-				/* Velocity 0 = Note Off */
 				for (int i = 0; i < MAX_VOICES; i++) {
 					if (s_voices[i].active && s_voices[i].channel == chan && s_voices[i].note == d1) {
 						s_voices[i].keyHeld = false;
@@ -619,16 +793,16 @@ void midi_send(uint32 data)
 
 		case 0xB0: { /* Control Change */
 			switch (d1) {
-				case 7: /* Main Volume */
+				case 7:
 					s_channels[chan].volume = d2;
 					break;
-				case 10: /* Pan */
+				case 10:
 					s_channels[chan].pan = d2;
 					break;
-				case 11: /* Expression */
+				case 11:
 					s_channels[chan].expression = d2;
 					break;
-				case 64: /* Sustain Pedal */
+				case 64:
 					s_channels[chan].sustain = (d2 >= 64);
 					if (!s_channels[chan].sustain) {
 						for (int i = 0; i < MAX_VOICES; i++) {
@@ -638,8 +812,8 @@ void midi_send(uint32 data)
 						}
 					}
 					break;
-				case 120: /* All Sound Off */
-				case 123: /* All Notes Off */
+				case 120:
+				case 123:
 					for (int i = 0; i < MAX_VOICES; i++) {
 						if (s_voices[i].channel == chan) {
 							s_voices[i].active = false;
@@ -647,7 +821,7 @@ void midi_send(uint32 data)
 						}
 					}
 					break;
-				case 121: /* Reset All Controllers */
+				case 121:
 					s_channels[chan].sustain = false;
 					s_channels[chan].pitch_bend = 0;
 					s_channels[chan].expression = 127;
@@ -675,6 +849,9 @@ void midi_send(uint32 data)
 		default:
 			break;
 	}
+#ifdef __3DS__
+	midi_unlock();
+#endif
 }
 
 uint16 midi_send_string(const uint8 *data, uint16 len)
@@ -685,6 +862,19 @@ uint16 midi_send_string(const uint8 *data, uint16 len)
 
 void midi_reset(void)
 {
+#ifdef __3DS__
+	midi_lock();
+	s_mpuSampleRem = 0;
+	if (s_tsf != NULL) {
+		tsf_reset(s_tsf);
+		for (int c = 0; c < NUM_MIDI_CHANNELS; c++) {
+			tsf_channel_set_presetnumber(s_tsf, c, 0, (c == 9));
+			tsf_channel_midi_control(s_tsf, c, 7, 100);
+			tsf_channel_midi_control(s_tsf, c, 10, 64);
+		}
+		tsf_channel_set_bank_preset(s_tsf, 9, 128, 0);
+	}
+#endif
 	for (int i = 0; i < MAX_VOICES; i++) {
 		s_voices[i].active = false;
 		s_voices[i].env_stage = ENV_OFF;
@@ -696,4 +886,7 @@ void midi_reset(void)
 		s_channels[c].pitch_bend = 0;
 		s_channels[c].sustain = false;
 	}
+#ifdef __3DS__
+	midi_unlock();
+#endif
 }

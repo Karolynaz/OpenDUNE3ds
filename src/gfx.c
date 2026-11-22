@@ -1,6 +1,7 @@
 /** @file src/gfx.c Graphics routines. */
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include "types.h"
@@ -256,6 +257,18 @@ void GFX_DrawTile(uint16 tileID, uint16 x, uint16 y, uint8 houseID)
 				wptr++;
 			}
 			wptr += s_tileSpacing;
+		}
+	} else if (s_tileWidth == 8 && (((uintptr_t)wptr & 3) == 0)) {
+		for (j = 0; j < s_tileHeight; j++) {
+			uint32 *w32 = (uint32 *)wptr;
+			uint8 b0 = rptr[0], b1 = rptr[1], b2 = rptr[2], b3 = rptr[3];
+			uint8 b4 = rptr[4], b5 = rptr[5], b6 = rptr[6], b7 = rptr[7];
+			w32[0] = (uint32)icon_palette[b0 >> 4] | ((uint32)icon_palette[b0 & 0xF] << 8) | ((uint32)icon_palette[b1 >> 4] << 16) | ((uint32)icon_palette[b1 & 0xF] << 24);
+			w32[1] = (uint32)icon_palette[b2 >> 4] | ((uint32)icon_palette[b2 & 0xF] << 8) | ((uint32)icon_palette[b3 >> 4] << 16) | ((uint32)icon_palette[b3 & 0xF] << 24);
+			w32[2] = (uint32)icon_palette[b4 >> 4] | ((uint32)icon_palette[b4 & 0xF] << 8) | ((uint32)icon_palette[b5 >> 4] << 16) | ((uint32)icon_palette[b5 & 0xF] << 24);
+			w32[3] = (uint32)icon_palette[b6 >> 4] | ((uint32)icon_palette[b6 & 0xF] << 8) | ((uint32)icon_palette[b7 >> 4] << 16) | ((uint32)icon_palette[b7 & 0xF] << 24);
+			rptr += 8;
+			wptr += SCREEN_WIDTH;
 		}
 	} else {
 		for (j = 0; j < s_tileHeight; j++) {

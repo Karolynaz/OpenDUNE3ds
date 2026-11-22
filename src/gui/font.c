@@ -26,8 +26,62 @@ Font *g_fontCurrent = NULL;
  * @param c The char to get the width of.
  * @return The width of the char in pixels.
  */
+unsigned char Font_NextChar(const char **str, uint8 *diacritic)
+{
+	const unsigned char *p = (const unsigned char *)*str;
+	uint8 dia = FONT_DIA_NONE;
+	unsigned char base;
+
+	if (p == NULL || *p == '\0') {
+		if (diacritic != NULL) *diacritic = FONT_DIA_NONE;
+		return '\0';
+	}
+
+	if (p[0] < 0x80) {
+		base = p[0];
+		*str += 1;
+	} else if ((p[0] == 0xC4 || p[0] == 0xC5) && (p[1] & 0xC0) == 0x80) {
+		uint16 cp = (uint16)(((p[0] & 0x1F) << 6) | (p[1] & 0x3F));
+		*str += 2;
+		switch (cp) {
+			case 0x0104: base = 'A'; dia = FONT_DIA_OGONEK; break;
+			case 0x0105: base = 'a'; dia = FONT_DIA_OGONEK; break;
+			case 0x010C: base = 'C'; dia = FONT_DIA_CARON;  break;
+			case 0x010D: base = 'c'; dia = FONT_DIA_CARON;  break;
+			case 0x0118: base = 'E'; dia = FONT_DIA_OGONEK; break;
+			case 0x0119: base = 'e'; dia = FONT_DIA_OGONEK; break;
+			case 0x0116: base = 'E'; dia = FONT_DIA_DOT;    break;
+			case 0x0117: base = 'e'; dia = FONT_DIA_DOT;    break;
+			case 0x012E: base = 'I'; dia = FONT_DIA_OGONEK; break;
+			case 0x012F: base = 'i'; dia = FONT_DIA_OGONEK; break;
+			case 0x0160: base = 'S'; dia = FONT_DIA_CARON;  break;
+			case 0x0161: base = 's'; dia = FONT_DIA_CARON;  break;
+			case 0x0172: base = 'U'; dia = FONT_DIA_OGONEK; break;
+			case 0x0173: base = 'u'; dia = FONT_DIA_OGONEK; break;
+			case 0x016A: base = 'U'; dia = FONT_DIA_MACRON; break;
+			case 0x016B: base = 'u'; dia = FONT_DIA_MACRON; break;
+			case 0x017D: base = 'Z'; dia = FONT_DIA_CARON;  break;
+			case 0x017E: base = 'z'; dia = FONT_DIA_CARON;  break;
+			default:     base = '?'; break;
+		}
+	} else {
+		/* Skip multi-byte UTF-8 sequences cleanly if encountered */
+		int skip = 1;
+		if ((p[0] & 0xE0) == 0xC0) skip = 2;
+		else if ((p[0] & 0xF0) == 0xE0) skip = 3;
+		else if ((p[0] & 0xF8) == 0xF0) skip = 4;
+		for (int i = 1; i < skip && p[i] == '\0'; i++) skip = i;
+		*str += skip;
+		base = '?';
+	}
+
+	if (diacritic != NULL) *diacritic = dia;
+	return base;
+}
+
 uint16 Font_GetCharWidth(unsigned char c)
 {
+	if (g_fontCurrent == NULL || g_fontCurrent->chars == NULL || c >= g_fontCurrent->count) return 0;
 	return g_fontCurrent->chars[c].width + g_fontCharOffset;
 }
 
@@ -44,7 +98,8 @@ uint16 Font_GetStringWidth(const char *string)
 	if (string == NULL) return 0;
 
 	while (*string != '\0') {
-		width += Font_GetCharWidth(*string++);
+		unsigned char base = Font_NextChar(&string, NULL);
+		width += Font_GetCharWidth(base);
 	}
 
 	return width;

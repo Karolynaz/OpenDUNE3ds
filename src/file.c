@@ -54,8 +54,12 @@ static char g_personal_data_dir[1024] = ".";
  * in a row, we cache the last opened PAK file.
  * DUNE II code is very conservative about file access, and only open
  * one file at once. */
-static FILE * s_currentPakFp = NULL;
-static const FileInfo *s_currentPakInfo = NULL;
+#define MAX_OPEN_PAKS 16
+typedef struct OpenPakCache {
+	const FileInfo *pakInfo;
+	FILE *fp;
+} OpenPakCache;
+static OpenPakCache s_openPaks[MAX_OPEN_PAKS];
 
 static FileInfo *FileInfo_Find_ByName(const char *filename, FileInfo **pakInfo);
 
@@ -157,6 +161,13 @@ File_MakeCompleteFilename(char *buf, size_t len, enum SearchDirectory dir, const
 		}
 	}
 }
+
+#ifdef __3DS__
+void File_GetPersonalPath(char *path, size_t size, const char *filename)
+{
+	File_MakeCompleteFilename(path, size, SEARCHDIR_PERSONAL_DATA_DIR, filename, NO_CONVERT);
+}
+#endif
 
 /**
  * Open a file from the data/ directory
@@ -293,13 +304,27 @@ static uint8 _File_Open(enum SearchDirectory dir, const char *filename, uint8 mo
 			fseek(s_file[fileIndex].fp, 0, SEEK_SET);
 		} else {
 			/* file is found in PAK */
-			if (pakInfo != s_currentPakInfo) {
-				if (s_currentPakFp != NULL) fclose(s_currentPakFp);
-				s_currentPakFp = fopendatadir(dir, pakInfo->filename, "rb");
-				s_currentPakInfo = pakInfo;
+			FILE *pakFp = NULL;
+			int emptySlot = -1;
+			for (int i = 0; i < MAX_OPEN_PAKS; i++) {
+				if (s_openPaks[i].pakInfo == pakInfo) {
+					pakFp = s_openPaks[i].fp;
+					break;
+				}
+				if (s_openPaks[i].pakInfo == NULL && emptySlot < 0) emptySlot = i;
 			}
-			s_file[fileIndex].fp = s_currentPakFp;
-			if (s_file[fileIndex].fp == NULL) return FILE_INVALID;
+			if (pakFp == NULL) {
+				pakFp = fopendatadir(dir, pakInfo->filename, "rb");
+				if (pakFp == NULL) return FILE_INVALID;
+#ifdef __3DS__
+				setvbuf(pakFp, NULL, _IOFBF, 32768);
+#endif
+				int slot = (emptySlot >= 0) ? emptySlot : 0;
+				if (s_openPaks[slot].fp != NULL) fclose(s_openPaks[slot].fp);
+				s_openPaks[slot].pakInfo = pakInfo;
+				s_openPaks[slot].fp = pakFp;
+			}
+			s_file[fileIndex].fp = pakFp;
 
 			s_file[fileIndex].start    = fileInfo->filePosition;
 			s_file[fileIndex].position = 0;
@@ -646,9 +671,11 @@ bool File_Init(void)
  */
 void File_Uninit(void)
 {
-	if (s_currentPakFp != NULL) fclose(s_currentPakFp);
-	s_currentPakFp = NULL;
-	s_currentPakInfo = NULL;
+	for (int i = 0; i < MAX_OPEN_PAKS; i++) {
+		if (s_openPaks[i].fp != NULL) fclose(s_openPaks[i].fp);
+		s_openPaks[i].fp = NULL;
+		s_openPaks[i].pakInfo = NULL;
+	}
 	while (s_files_in_root != NULL) {
 		FileInfoLinkedElem *e = s_files_in_root;
 		s_files_in_root = e->next;

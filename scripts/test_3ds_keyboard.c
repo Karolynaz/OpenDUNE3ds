@@ -3,6 +3,7 @@
 bool g_viewport_forceRedraw;
 static int cleared;
 void Input_History_Clear(void) {cleared++;}
+bool GUI_3DS_IsLithuanian(void) {return false;}
 int main(void)
 {
  char text[51]="Old description";

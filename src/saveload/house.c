@@ -44,6 +44,10 @@ static const SaveLoadDesc s_saveHouse[] = {
  */
 bool House_Load(FILE *fp, uint32 length)
 {
+	const uint32 recordSize = SaveLoad_GetLength(s_saveHouse);
+	if (length % recordSize != 0) return false;
+	bool human = false;
+
 	while (length > 0) {
 		House *h;
 		House hl;
@@ -53,9 +57,10 @@ bool House_Load(FILE *fp, uint32 length)
 		/* Read the next House from disk */
 		if (!SaveLoad_Load(s_saveHouse, fp, &hl)) return false;
 
-		length -= SaveLoad_GetLength(s_saveHouse);
+		length -= recordSize;
 
 		/* Create the House in the pool */
+		if (hl.index >= HOUSE_MAX) return false;
 		h = House_Allocate(hl.index);
 		if (h == NULL) return false;
 
@@ -64,15 +69,15 @@ bool House_Load(FILE *fp, uint32 length)
 
 		/* See if it is a human house */
 		if (h->flags.human) {
+			if (human) return false;
+			human = true;
 			g_playerHouseID = h->index;
 			g_playerHouse = h;
 
 			if (h->starportLinkedID != 0xFFFF && h->starportTimeLeft == 0) h->starportTimeLeft = 1;
 		}
 	}
-	if (length != 0) return false;
-
-	return true;
+	return human;
 }
 
 /**
@@ -91,6 +96,7 @@ bool House_LoadOld(FILE *fp, uint32 length)
 
 		/* See if it is a human house */
 		if (hl.flags.human) {
+			if (hl.index >= HOUSE_MAX) return false;
 			g_playerHouseID = hl.index;
 			break;
 		}

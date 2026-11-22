@@ -123,6 +123,11 @@ static void Explosion_Func_PlayVoice(Explosion *e, uint16 voiceID)
  */
 static void Explosion_Func_ScreenShake(Explosion *e, uint16 parameter)
 {
+#ifdef __3DS__
+	VARIABLE_NOT_USED(e);
+	VARIABLE_NOT_USED(parameter);
+	return;
+#else
 	int i;
 #ifdef _DEBUG
 	Debug("Explosion_Func_ScreenShake(%p, %d)\n", e, parameter);
@@ -147,6 +152,7 @@ static void Explosion_Func_ScreenShake(Explosion *e, uint16 parameter)
 #endif
 		Video_SetOffset(0);
 	}
+#endif
 }
 
 /**

@@ -9,6 +9,7 @@
 #include "dsp.h"
 
 #define DUNE_AUDIO_CHANNEL 0
+#define DUNE_VOC_MAX_SAMPLES (256u * 1024u)
 
 static bool s_ndspInitialized = false;
 static ndspWaveBuf s_waveBuf[2];
@@ -16,6 +17,23 @@ static int8 *s_audioBuffer[2] = { NULL, NULL };
 static size_t s_audioBufferSize[2] = { 0, 0 };
 static int s_currentBuf = 0;
 static uint8 s_status = 0;
+
+static void DSP_ApplyChannelMix(void)
+{
+	float mix[12];
+	memset(mix, 0, sizeof(mix));
+	mix[0] = 1.0f; /* Left */
+	mix[1] = 1.0f; /* Right */
+	ndspChnSetMix(DUNE_AUDIO_CHANNEL, mix);
+}
+
+static uint32 DSP_ClampSampleRate(uint8 timeConstant)
+{
+	uint32 sr = 1000000u / (uint32)(256u - (uint32)timeConstant);
+	if (sr < 4000u) sr = 4000u;
+	if (sr > 48000u) sr = 48000u;
+	return sr;
+}
 
 bool DSP_Init(void)
 {
@@ -34,12 +52,7 @@ bool DSP_Init(void)
 	ndspChnSetInterp(DUNE_AUDIO_CHANNEL, NDSP_INTERP_LINEAR);
 	ndspChnSetRate(DUNE_AUDIO_CHANNEL, 22050.0f);
 	ndspChnSetFormat(DUNE_AUDIO_CHANNEL, NDSP_FORMAT_MONO_PCM8);
-
-	float mix[12];
-	memset(mix, 0, sizeof(mix));
-	mix[0] = 1.0f; // Left
-	mix[1] = 1.0f; // Right
-	ndspChnSetMix(DUNE_AUDIO_CHANNEL, mix);
+	DSP_ApplyChannelMix();
 
 	memset(s_waveBuf, 0, sizeof(s_waveBuf));
 	s_status = 0;
@@ -76,9 +89,10 @@ void DSP_Uninit(void)
 
 void DSP_Play(const uint8 *data)
 {
-	uint32 sampleLen;
-	uint32 sampleRate;
-	const uint8 *src;
+	uint32 totalSamples = 0;
+	uint32 sampleRate = 0;
+	const uint8 *blocksStart;
+	const uint8 *blk;
 	int8 *dst;
 
 	if (!s_ndspInitialized && !DSP_Init()) return;
@@ -88,29 +102,47 @@ void DSP_Play(const uint8 *data)
 	if (data == NULL) return;
 
 	/* VOC Header parsing */
-	data += READ_LE_UINT16(data + 20);
+	blocksStart = data + READ_LE_UINT16(data + 20);
 
-	if (*data != 1) return; /* Block 1 = Sound data */
+	/* Pass 1: compute total PCM + silence sample count across all blocks */
+	blk = blocksStart;
+	while (*blk != 0) {
+		uint8 blockType = *blk;
+		uint32 blockLen = READ_LE_UINT32(blk) >> 8;
 
-	uint32 blockLen = READ_LE_UINT32(data) >> 8;
-	if (blockLen <= 2 || data[5] != 0) return; /* Uncompressed PCM only. */
-	sampleLen = blockLen - 2;
-	if (sampleLen == 0) return;
+		if (blockType == 1) {
+			if (blockLen <= 2 || blk[5] != 0) return; /* Uncompressed PCM only. */
+			if (sampleRate == 0) sampleRate = DSP_ClampSampleRate(blk[4]);
+			totalSamples += blockLen - 2;
+		} else if (blockType == 2) {
+			totalSamples += blockLen;
+		} else if (blockType == 3 && blockLen >= 3) {
+			uint32 period = (uint32)READ_LE_UINT16(blk + 4) + 1u;
+			uint32 silRate = DSP_ClampSampleRate(blk[6]);
+			if (sampleRate == 0) sampleRate = silRate;
+			uint32 silSamples = (uint32)(((uint64_t)period * sampleRate) / silRate);
+			totalSamples += silSamples;
+		} else {
+			break;
+		}
 
-	sampleRate = 1000000 / (256 - data[4]);
-	if (sampleRate < 4000) sampleRate = 4000;
-	if (sampleRate > 48000) sampleRate = 48000;
+		if (totalSamples > DUNE_VOC_MAX_SAMPLES) {
+			totalSamples = DUNE_VOC_MAX_SAMPLES;
+			break;
+		}
+		blk += 4 + blockLen;
+	}
 
-	src = data + 6;
+	if (totalSamples == 0 || sampleRate == 0) return;
 
 	s_currentBuf = 1 - s_currentBuf;
 
 	/* Ensure linear allocated buffer for 3DS DSP DMA */
-	if (s_audioBufferSize[s_currentBuf] < sampleLen) {
+	if (s_audioBufferSize[s_currentBuf] < totalSamples) {
 		if (s_audioBuffer[s_currentBuf] != NULL) {
 			linearFree(s_audioBuffer[s_currentBuf]);
 		}
-		s_audioBufferSize[s_currentBuf] = (sampleLen + 4095) & ~4095;
+		s_audioBufferSize[s_currentBuf] = (totalSamples + 4095u) & ~4095u;
 		s_audioBuffer[s_currentBuf] = (int8 *)linearAlloc(s_audioBufferSize[s_currentBuf]);
 		if (s_audioBuffer[s_currentBuf] == NULL) {
 			s_audioBufferSize[s_currentBuf] = 0;
@@ -120,20 +152,59 @@ void DSP_Play(const uint8 *data)
 
 	dst = s_audioBuffer[s_currentBuf];
 
-	/* Convert 8-bit unsigned PCM to signed PCM for NDSP */
-	for (uint32 i = 0; i < sampleLen; i++) {
-		dst[i] = (int8)((int)src[i] - 128);
+	/* Pass 2: convert unsigned 8-bit PCM to signed PCM and expand silence blocks */
+	uint32 outPos = 0;
+	blk = blocksStart;
+	while (*blk != 0 && outPos < totalSamples) {
+		uint8 blockType = *blk;
+		uint32 blockLen = READ_LE_UINT32(blk) >> 8;
+
+		if (blockType == 1) {
+			const uint8 *src = blk + 6;
+			uint32 n = blockLen - 2;
+			if (outPos + n > totalSamples) n = totalSamples - outPos;
+			for (uint32 i = 0; i < n; i++) {
+				dst[outPos++] = (int8)((int)src[i] - 128);
+			}
+		} else if (blockType == 2) {
+			const uint8 *src = blk + 4;
+			uint32 n = blockLen;
+			if (outPos + n > totalSamples) n = totalSamples - outPos;
+			for (uint32 i = 0; i < n; i++) {
+				dst[outPos++] = (int8)((int)src[i] - 128);
+			}
+		} else if (blockType == 3 && blockLen >= 3) {
+			uint32 period = (uint32)READ_LE_UINT16(blk + 4) + 1u;
+			uint32 silRate = DSP_ClampSampleRate(blk[6]);
+			uint32 n = (uint32)(((uint64_t)period * sampleRate) / silRate);
+			if (outPos + n > totalSamples) n = totalSamples - outPos;
+			memset(dst + outPos, 0, n);
+			outPos += n;
+		} else {
+			break;
+		}
+		blk += 4 + blockLen;
 	}
 
-	DSP_FlushDataCache(dst, sampleLen);
+	/* Gentle 16-sample de-click ramp on real VOC payloads (>= 64 samples). */
+	if (outPos >= 64) {
+		for (uint32 i = 0; i < 16; i++) {
+			dst[i] = (int8)(((int)dst[i] * (int)i) / 16);
+			dst[outPos - 1u - i] = (int8)(((int)dst[outPos - 1u - i] * (int)i) / 16);
+		}
+	}
+
+	DSP_FlushDataCache(dst, outPos);
 
 	ndspChnReset(DUNE_AUDIO_CHANNEL);
+	ndspChnSetInterp(DUNE_AUDIO_CHANNEL, NDSP_INTERP_LINEAR);
 	ndspChnSetFormat(DUNE_AUDIO_CHANNEL, NDSP_FORMAT_MONO_PCM8);
 	ndspChnSetRate(DUNE_AUDIO_CHANNEL, (float)sampleRate);
+	DSP_ApplyChannelMix();
 
 	memset(&s_waveBuf[s_currentBuf], 0, sizeof(ndspWaveBuf));
 	s_waveBuf[s_currentBuf].data_vaddr = dst;
-	s_waveBuf[s_currentBuf].nsamples = sampleLen;
+	s_waveBuf[s_currentBuf].nsamples = outPos;
 	s_waveBuf[s_currentBuf].status = NDSP_WBUF_FREE;
 
 	ndspChnWaveBufAdd(DUNE_AUDIO_CHANNEL, &s_waveBuf[s_currentBuf]);

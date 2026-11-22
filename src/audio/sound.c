@@ -151,9 +151,13 @@ void Voice_PlayAtTile(int16 voiceID, tile32 position)
 
 	if (g_enableVoices != 0 && index != 0xFFFF && g_voiceData[index] != NULL && g_table_voices[index].priority >= s_currentVoicePriority) {
 		s_currentVoicePriority = g_table_voices[index].priority;
+#ifdef __3DS__
+		Driver_Voice_Play(g_voiceData[index], s_currentVoicePriority);
+#else
 		memmove(g_readBuffer, g_voiceData[index], g_voiceDataSize[index]);
 
 		Driver_Voice_Play(g_readBuffer, s_currentVoicePriority);
+#endif
 	} else {
 		Driver_Sound_Play(voiceID, volume);
 	}
@@ -201,7 +205,7 @@ void Voice_LoadVoices(uint16 voiceSet)
 		/* unload if necessary */
 		switch (g_table_voices[voice].string[0]) {
 			case '%':
-				if (g_config.language != LANGUAGE_ENGLISH || currentVoiceSet == voiceSet) {
+				if ((g_config.language != LANGUAGE_ENGLISH && g_config.language != LANGUAGE_LITHUANIAN) || currentVoiceSet == voiceSet) {
 					if (voiceSet != 0xFFFF && voiceSet != 0xFFFE) break;
 				}
 
@@ -243,7 +247,9 @@ void Voice_LoadVoices(uint16 voiceSet)
 	for (voice = 0; voice < NUM_VOICES; voice++) {
 		char filename[16];
 		const char *str = g_table_voices[voice].string;
+#ifndef __3DS__
 		sleepIdle();	/* let a chance to update screen, etc. */
+#endif
 		switch (*str) {
 			case '%':
 				if (g_voiceData[voice] != NULL ||
@@ -301,7 +307,20 @@ void Voice_LoadVoices(uint16 voiceSet)
 				break;
 
 			case '?':
-				/* Do not preload */
+#ifdef __3DS__
+				if (g_voiceData[voice] != NULL || voiceSet == 0xFFFF || voiceSet == 0xFFFE) break;
+				if (str[1] == '%') {
+					switch (g_config.language) {
+						case LANGUAGE_FRENCH: prefixChar = 'F'; break;
+						case LANGUAGE_GERMAN: prefixChar = 'G'; break;
+						default: prefixChar = g_table_houseInfo[voiceSet].prefixChar;
+					}
+					snprintf(filename, sizeof(filename), str + 1, prefixChar);
+					g_voiceData[voice] = Sound_LoadVoc(filename, &g_voiceDataSize[voice]);
+				} else {
+					g_voiceData[voice] = Sound_LoadVoc(str + 1, &g_voiceDataSize[voice]);
+				}
+#endif
 				break;
 
 			default:
@@ -401,7 +420,7 @@ void Sound_Output_Feedback(uint16 index)
 		uint8 i;
 
 		for (i = 0; i < lengthof(s_spokenWords); i++) {
-			s_spokenWords[i] = (g_config.language == LANGUAGE_ENGLISH) ? g_feedback[index].voiceId[i] : g_translatedVoice[index][i];
+			s_spokenWords[i] = (g_config.language == LANGUAGE_ENGLISH || g_config.language == LANGUAGE_LITHUANIAN) ? g_feedback[index].voiceId[i] : g_translatedVoice[index][i];
 		}
 	}
 

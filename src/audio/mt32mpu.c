@@ -278,8 +278,10 @@ static void MPU_Control(MSData *data, uint8 chan, uint8 control, uint8 value)
 			break;
 
 		case 7: /* PART_VOLUME / Channel Volume */
-			if (data->globalVolume == 100) break;
-			value = min(data->globalVolume * value / 100, 127);
+			data->controls[chan].volume = value;
+			if (data->globalVolume != 100) {
+				value = min(data->globalVolume * value / 100, 127);
+			}
 			s_mpu_controls[chan].volume = value;
 			if ((s_mpu_lockStatus[chan] & 0x80) == 0) MPU_Send(0xB0 | data->chanMaps[chan], control, value);
 			break;
@@ -775,13 +777,21 @@ uint16 MPU_SetData(uint8 *file, uint16 index, void *msdata)
 
 	if (file == NULL) return 0xFFFF;
 
+	midi_lock();
+
 	for (i = 0; i < 8; i++) {
 		if (s_mpu_msdata[i] == NULL) break;
 	}
-	if (i == 8) return 0xFFFF;
+	if (i == 8) {
+		midi_unlock();
+		return 0xFFFF;
+	}
 
 	file = MPU_FindSoundStart(file, index);
-	if (file == NULL) return 0xFFFF;
+	if (file == NULL) {
+		midi_unlock();
+		return 0xFFFF;
+	}
 
 	s_mpu_msdata[i] = data;
 	data->EVNT = NULL;
@@ -802,6 +812,7 @@ uint16 MPU_SetData(uint8 *file, uint16 index, void *msdata)
 
 	MPU_InitData(data);
 
+	midi_unlock();
 	return i;
 }
 
@@ -811,6 +822,7 @@ void MPU_Play(uint16 index)
 
 	if (index == 0xFFFF) return;
 
+	midi_lock();
 	data = s_mpu_msdata[index];
 
 	if (data->playing == 1) MPU_Stop(index);
@@ -820,6 +832,7 @@ void MPU_Play(uint16 index)
 	data->sound = data->EVNT + 8;
 
 	data->playing = 1;
+	midi_unlock();
 }
 
 static void MPU_StopAllNotes(MSData *data)
@@ -849,27 +862,34 @@ void MPU_Stop(uint16 index)
 	MSData *data;
 
 	if (index == 0xFFFF) return;
-	if (s_mpu_msdata[index] == NULL) return;
+	midi_lock();
+	if (s_mpu_msdata[index] == NULL) {
+		midi_unlock();
+		return;
+	}
 
 	data = s_mpu_msdata[index];
 
-	if (data->playing != 1) return;
+	if (data->playing != 1) {
+		midi_unlock();
+		return;
+	}
 
 	MPU_StopAllNotes(data);
 	MPU_ResetSequence(data);
 
 	data->playing = 0;
+	midi_unlock();
 }
 
 uint16 MPU_IsPlaying(uint16 index)
 {
 	MSData *data;
 
-	if (index == 0xFFFF) return 0xFFFF;
+	if (index >= 8) return 0xFFFF;
 
 	data = s_mpu_msdata[index];
-
-	return data->playing;
+	return (data != NULL) ? data->playing : 0;
 }
 
 uint16 MPU_GetDataSize(void)
@@ -998,7 +1018,11 @@ void MPU_ClearData(uint16 index)
 	MSData *data;
 
 	if (index == 0xFFFF) return;
-	if (s_mpu_msdata[index] == NULL) return;
+	midi_lock();
+	if (s_mpu_msdata[index] == NULL) {
+		midi_unlock();
+		return;
+	}
 
 	data = s_mpu_msdata[index];
 
@@ -1008,6 +1032,7 @@ void MPU_ClearData(uint16 index)
 		s_mpu_msdata[index] = NULL;
 		s_mpu_msdataSize--;
 	}
+	midi_unlock();
 }
 
 /**
@@ -1023,7 +1048,12 @@ void MPU_SetVolume(uint16 index, uint16 volume, uint16 time)
 
 	if (index == 0xFFFF) return;
 
+	midi_lock();
 	data = s_mpu_msdata[index];
+	if (data == NULL) {
+		midi_unlock();
+		return;
+	}
 
 	data->globalVolumeTarget = volume;	/* volume target */
 
@@ -1031,15 +1061,20 @@ void MPU_SetVolume(uint16 index, uint16 volume, uint16 time)
 		/* immediate */
 		data->globalVolume = volume;
 		MPU_ApplyVolume(data);
+		midi_unlock();
 		return;
 	}
 
 	diff = data->globalVolumeTarget - data->globalVolume;
-	if (diff == 0) return;
+	if (diff == 0) {
+		midi_unlock();
+		return;
+	}
 
 	data->globalVolumeIncr = 10 * (uint32)time / (uint16)abs(diff);	/* volume increment per 100us period */
 	if (data->globalVolumeIncr == 0) data->globalVolumeIncr = 1;
 	data->globalVolumeAcc = 0;	/* vol_accum */
+	midi_unlock();
 }
 
 #if defined(_WIN32)

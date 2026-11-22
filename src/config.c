@@ -12,7 +12,7 @@
 #include "file.h"
 #include "string.h"
 
-GameCfg g_gameConfig = { 1, 1, 2, 1, 0 };
+GameCfg g_gameConfig = { .music = 1, .sounds = 1, .gameSpeed = 4, .hints = 1, .cursorSpeed = 2 };
 DuneCfg g_config;
 bool g_enableSoundMusic = true;
 bool g_enableVoices = true;
@@ -117,11 +117,20 @@ bool GameOptions_Load(void)
 
 	if (index == FILE_INVALID) return false;
 
+	uint32 size = File_GetSize(index);
+
 	g_gameConfig.music = File_Read_LE16(index);
 	g_gameConfig.sounds = File_Read_LE16(index);
 	g_gameConfig.gameSpeed = File_Read_LE16(index);
+	if (g_gameConfig.gameSpeed > 4) g_gameConfig.gameSpeed = 4;
 	g_gameConfig.hints = File_Read_LE16(index);
 	g_gameConfig.autoScroll = File_Read_LE16(index);
+	if (size >= 12) {
+		g_gameConfig.cursorSpeed = File_Read_LE16(index);
+		if (g_gameConfig.cursorSpeed > 4) g_gameConfig.cursorSpeed = 4;
+	} else {
+		g_gameConfig.cursorSpeed = 2;
+	}
 
 	File_Close(index);
 
@@ -144,6 +153,7 @@ void GameOptions_Save(void)
 	File_Write_LE16(index, g_gameConfig.gameSpeed);
 	File_Write_LE16(index, g_gameConfig.hints);
 	File_Write_LE16(index, g_gameConfig.autoScroll);
+	File_Write_LE16(index, g_gameConfig.cursorSpeed);
 
 	File_Close(index);
 

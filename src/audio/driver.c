@@ -36,6 +36,15 @@ MSBuffer *g_bufferSound[4] = { &s_bufferSound[0], &s_bufferSound[1], &s_bufferSo
 
 static uint8 s_bufferSoundIndex;
 
+#ifdef __3DS__
+#define DRIVER_FILE_CACHE_MAX 24
+typedef struct DriverFileCache {
+	char filename[16];
+	void *content;
+} DriverFileCache;
+static DriverFileCache s_driverFileCache[DRIVER_FILE_CACHE_MAX];
+#endif
+
 static void Driver_Init(uint16 driver)
 {
 	if (driver >= 16) return;
@@ -119,7 +128,7 @@ static bool Drivers_SoundMusic_Init(bool enable)
 
 #if defined(_WIN32)
 	MPU_StartThread(1000000 / 120);
-#else
+#elif !defined(__3DS__)
 	Timer_Add(MPU_Interrupt, 1000000 / 120, false);
 #endif
 
@@ -384,7 +393,7 @@ static void Drivers_SoundMusic_Uninit(void)
 
 #if defined(_WIN32)
 		MPU_StopThread();
-#else
+#elif !defined(__3DS__)
 		Timer_Remove(MPU_Interrupt);
 #endif
 
@@ -400,6 +409,14 @@ static void Drivers_SoundMusic_Uninit(void)
 
 	if (music->content != sound->content) Driver_UnloadFile(music);
 	Driver_UnloadFile(sound);
+
+#ifdef __3DS__
+	for (int i = 0; i < DRIVER_FILE_CACHE_MAX; i++) {
+		free(s_driverFileCache[i].content);
+		s_driverFileCache[i].content = NULL;
+		s_driverFileCache[i].filename[0] = '\0';
+	}
+#endif
 
 	/* Only Uninit() sound, as music is a copy of sound. */
 	Drivers_Uninit(sound);
@@ -437,8 +454,31 @@ void Driver_LoadFile(const char *musicName, Driver *driver)
 	assert(len <= sizeof(driver->filename));
 	memcpy(driver->filename, filename, len);
 
+#ifdef __3DS__
+	for (int i = 0; i < DRIVER_FILE_CACHE_MAX; i++) {
+		if (s_driverFileCache[i].content != NULL && strcasecmp(s_driverFileCache[i].filename, filename) == 0) {
+			driver->content = s_driverFileCache[i].content;
+			driver->contentMalloced = false;
+			Debug("Driver_LoadFile(%s, %p): %s cached\n", musicName, driver, filename);
+			return;
+		}
+	}
 	driver->content = File_ReadWholeFile(filename);
 	driver->contentMalloced = true;
+	if (driver->content != NULL && len <= sizeof(s_driverFileCache[0].filename)) {
+		for (int i = 0; i < DRIVER_FILE_CACHE_MAX; i++) {
+			if (s_driverFileCache[i].content == NULL) {
+				memcpy(s_driverFileCache[i].filename, filename, len);
+				s_driverFileCache[i].content = driver->content;
+				driver->contentMalloced = false;
+				break;
+			}
+		}
+	}
+#else
+	driver->content = File_ReadWholeFile(filename);
+	driver->contentMalloced = true;
+#endif
 	Debug("Driver_LoadFile(%s, %p): %s loaded\n", musicName, driver, filename);
 }
 

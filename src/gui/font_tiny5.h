@@ -130,6 +130,19 @@ static inline uint32_t Tiny5_NextChar(const char **p)
     return c;
 }
 
+static inline int Tiny5_Diacritic(uint32_t ch)
+{
+    switch (ch) {
+        case 0x0104: case 0x0105: case 0x0118: case 0x0119:
+        case 0x012E: case 0x012F: case 0x0172: case 0x0173: return 1; /* ogonek */
+        case 0x010C: case 0x010D: case 0x0160: case 0x0161:
+        case 0x017D: case 0x017E: return 2; /* caron */
+        case 0x0116: case 0x0117: return 3; /* dot */
+        case 0x016A: case 0x016B: return 4; /* macron */
+        default: return 0;
+    }
+}
+
 static inline int Tiny5_CharIndex(uint32_t ch)
 {
     if (ch >= 32 && ch <= 126) return (int)(ch - 32);
@@ -169,6 +182,25 @@ static inline int Tiny5_TextWidth(const char *text)
     return w;
 }
 
+static inline void Tiny5_Plot2x(uint8_t *buf, int stride, int px, int py, bool shadowPass, uint8_t color)
+{
+    if (shadowPass) {
+        for (int oy = 1; oy <= 2; oy++) {
+            for (int ox = 1; ox <= 2; ox++) {
+                int sx = px + ox, sy = py + oy;
+                if (sx >= 0 && sx < stride && sy >= 0 && sy < 240) buf[sy * stride + sx] = TC_BLACK;
+            }
+        }
+    } else {
+        for (int dy = 0; dy < 2; dy++) {
+            for (int dx = 0; dx < 2; dx++) {
+                int fx = px + dx, fy = py + dy;
+                if (fx >= 0 && fx < stride && fy >= 0 && fy < 240) buf[fy * stride + fx] = color;
+            }
+        }
+    }
+}
+
 static inline void Tiny5_DrawText(uint8_t *buf, int stride, int cx, int baseY, const char *text, uint8_t color, bool shadow)
 {
     if (!buf || !text) return;
@@ -181,6 +213,7 @@ static inline void Tiny5_DrawText(uint8_t *buf, int stride, int cx, int baseY, c
         while (*p && *p != '\n') {
             uint32_t ch = Tiny5_NextChar(&p);
             int idx = Tiny5_CharIndex(ch);
+            int dia = Tiny5_Diacritic(ch);
             const Tiny5Glyph *g = &s_tiny5Glyphs[idx];
             for (int r = 0; r < g->h; r++) {
                 int y_rel = g->yoff + (g->h - 1 - r);
@@ -189,28 +222,30 @@ static inline void Tiny5_DrawText(uint8_t *buf, int stride, int cx, int baseY, c
                 for (int col = 0; col < g->w; col++) {
                     if ((row >> (7 - col)) & 1) {
                         int px = curX + (g->xoff + col) * 2;
-                        if (pass == 0) {
-                            /* Filled 2px drop shadow */
-                            for (int off_y = 1; off_y <= 2; off_y++) {
-                                for (int off_x = 1; off_x <= 2; off_x++) {
-                                    int sx = px + off_x;
-                                    int sy = py + off_y;
-                                    if (sx >= 0 && sx < stride && sy >= 0 && sy < 240) {
-                                        buf[sy * stride + sx] = TC_BLACK;
-                                    }
-                                }
-                            }
-                        } else {
-                            for (int dy = 0; dy < 2; dy++) {
-                                for (int dx = 0; dx < 2; dx++) {
-                                    int fx = px + dx;
-                                    int fy = py + dy;
-                                    if (fx >= 0 && fx < stride && fy >= 0 && fy < 240) {
-                                        buf[fy * stride + fx] = ink;
-                                    }
-                                }
-                            }
-                        }
+                        Tiny5_Plot2x(buf, stride, px, py, pass == 0, ink);
+                    }
+                }
+            }
+            if (dia != 0) {
+                int gw = (int)g->w;
+                int midX = curX + ((gw > 1) ? (gw - 1) : 0);
+                if (dia == 1) { /* ogonek below right */
+                    int ox = curX + ((gw > 1) ? (gw - 1) * 2 : 0);
+                    Tiny5_Plot2x(buf, stride, ox, baseY + 2, pass == 0, ink);
+                } else {
+                    int topRel = g->yoff + (int)g->h;
+                    int ay = baseY - topRel * 2 - 2;
+                    if (dia == 3) {
+                        Tiny5_Plot2x(buf, stride, midX, ay, pass == 0, ink);
+                    } else if (dia == 4) {
+                        Tiny5_Plot2x(buf, stride, curX, ay, pass == 0, ink);
+                        Tiny5_Plot2x(buf, stride, curX + 2, ay, pass == 0, ink);
+                        Tiny5_Plot2x(buf, stride, curX + 4, ay, pass == 0, ink);
+                    } else if (dia == 2) {
+                        int rightX = curX + ((gw > 1) ? (gw - 1) * 2 : 2);
+                        Tiny5_Plot2x(buf, stride, curX, ay - 2, pass == 0, ink);
+                        Tiny5_Plot2x(buf, stride, midX, ay, pass == 0, ink);
+                        Tiny5_Plot2x(buf, stride, rightX, ay - 2, pass == 0, ink);
                     }
                 }
             }

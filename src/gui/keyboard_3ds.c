@@ -18,7 +18,7 @@ bool GUI_3DS_InputText(char *description, uint16 maxLength, const char *hint, co
  swkbdInit(&keyboard,SWKBD_TYPE_NORMAL,2,maxLength);
  swkbdSetValidation(&keyboard,SWKBD_NOTEMPTY_NOTBLANK,0,0);
  swkbdSetHintText(&keyboard,hint);
- swkbdSetButton(&keyboard,SWKBD_BUTTON_LEFT,"Cancel",false);
+ swkbdSetButton(&keyboard,SWKBD_BUTTON_LEFT,GUI_3DS_IsLithuanian() ? "Atšaukti" : "Cancel",false);
  swkbdSetButton(&keyboard,SWKBD_BUTTON_RIGHT,confirm,true);
  swkbdSetInitialText(&keyboard,text);
  SwkbdButton result=swkbdInputText(&keyboard,text,capacity);
@@ -36,5 +36,7 @@ bool GUI_3DS_InputText(char *description, uint16 maxLength, const char *hint, co
 
 bool GUI_3DS_InputSaveName(char *description)
 {
- return GUI_3DS_InputText(description,50,"Saved game description","Save");
+ return GUI_3DS_InputText(description,50,
+  GUI_3DS_IsLithuanian() ? "Išsaugojimo aprašymas" : "Saved game description",
+  GUI_3DS_IsLithuanian() ? "Išsaugoti" : "Save");
 }

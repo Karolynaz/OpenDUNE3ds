@@ -91,24 +91,28 @@ uint32 Timer_GetTime(void)
 /**
  * Run the timer interrupt handler.
  */
-static void Timer_InterruptRun(int arg)
+static bool Timer_InterruptRun(int arg)
 {
 	TimerNode *node;
 	uint32 new_time, usec_delta, delta;
 	int i;
+	bool fired = false;
 
 	/* Lock the timer, to avoid double-calls */
 	static bool timerLock = false;
-	if (timerLock) return;
+	if (timerLock) return false;
 	timerLock = true;
 
 #if defined(__3DS__)
 	static u64 s_timerLastTick3DS = 0;
+	static u64 s_timerRem3DS = 0;
 	u64 nowTick = svcGetSystemTick();
 	if (s_timerLastTick3DS == 0) s_timerLastTick3DS = nowTick;
 	u64 tickDelta = nowTick - s_timerLastTick3DS;
 	s_timerLastTick3DS = nowTick;
-	usec_delta = (uint32)((tickDelta * 1000000ULL) / SYSCLOCK_ARM11);
+	u64 numer = tickDelta * 1000000ULL + s_timerRem3DS;
+	usec_delta = (uint32)(numer / SYSCLOCK_ARM11);
+	s_timerRem3DS = numer % SYSCLOCK_ARM11;
 	if (usec_delta > 50000) usec_delta = 50000;
 	new_time = (uint32)((nowTick * 1000ULL) / SYSCLOCK_ARM11);
 	s_timerLastTime = new_time;
@@ -126,12 +130,14 @@ static void Timer_InterruptRun(int arg)
 
 		/* No delay means: as often as possible, but don't worry about it */
 		if (node->usec_delay == 0) {
+			fired = true;
 			node->callback();
 			continue;
 		}
 
 		if (node->callonce) {
 			if (node->usec_left <= delta) {
+				fired = true;
 				delta -= node->usec_left;
 				node->usec_left = node->usec_delay;
 				while (node->usec_left <= delta) delta -= node->usec_left;
@@ -144,6 +150,7 @@ static void Timer_InterruptRun(int arg)
 				continue;
 			}
 		} else while (node->usec_left <= delta) {
+			fired = true;
 			delta -= node->usec_left;
 			node->usec_left = node->usec_delay;
 			node->callback();
@@ -152,6 +159,7 @@ static void Timer_InterruptRun(int arg)
 	}
 
 	timerLock = false;
+	return fired;
 }
 
 #if defined(TOS) || defined(DOS)
@@ -183,9 +191,28 @@ extern void midi_3ds_pump(void);
 
 void SleepAndProcessBackgroundTasks(void)
 {
-	Timer_InterruptRun(0);
+	if (s_timerNodeCount == 0) {
+		midi_3ds_pump();
+		svcSleepThread(1000000LL);
+		return;
+	}
+	while (!Timer_InterruptRun(0)) {
+		midi_3ds_pump();
+		uint32 min_left = 0xFFFFFFFF;
+		for (int i = 0; i < s_timerNodeCount; i++) {
+			if (s_timerNodes[i].usec_delay == 0) {
+				min_left = 0;
+				break;
+			}
+			if (s_timerNodes[i].usec_left < min_left) {
+				min_left = s_timerNodes[i].usec_left;
+			}
+		}
+		if (min_left == 0 || min_left == 0xFFFFFFFF) break;
+		if (min_left > 16667) min_left = 16667;
+		svcSleepThread((s64)min_left * 1000LL);
+	}
 	midi_3ds_pump();
-	svcSleepThread(500000);
 }
 #elif !defined(_WIN32) || defined(WITH_SDL) || defined(WITH_SDL2)
 #if defined(_WIN32)

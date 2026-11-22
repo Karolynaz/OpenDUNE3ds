@@ -1,6 +1,10 @@
 /** @file src/save.c Save routines. */
 
 #include <stdio.h>
+#ifdef __3DS__
+#include <errno.h>
+#include <sys/stat.h>
+#endif
 #include <string.h>
 #include "types.h"
 
@@ -43,9 +47,12 @@ static bool Save_Chunk(FILE *fp, const char *header, bool (*saveProc)(FILE *fp))
 	if (fwrite(&length, 4, 1, fp) != 1) return false;
 
 	/* Store the content of the chunk, and remember the length */
-	position = ftell(fp);
-	if (!saveProc(fp)) return false;
-	length = ftell(fp) - position;
+	long start = ftell(fp);
+	if (start < 0 || !saveProc(fp)) return false;
+	long end = ftell(fp);
+	if (end < start) return false;
+	position = start;
+	length = end - start;
 
 	/* Ensure we are word aligned */
 	if ((length & 1) == 1) {
@@ -54,12 +61,10 @@ static bool Save_Chunk(FILE *fp, const char *header, bool (*saveProc)(FILE *fp))
 	}
 
 	/* Write back the chunk size */
-	fseek(fp, position - 4, SEEK_SET);
+	if (fseek(fp, position - 4, SEEK_SET) != 0) return false;
 	lengthSwapped = HTOBE32(length);
 	if (fwrite(&lengthSwapped, 4, 1, fp) != 1) return false;
-	fseek(fp, 0, SEEK_END);
-
-	return true;
+	return fseek(fp, 0, SEEK_END) == 0;
 }
 
 /**
@@ -106,13 +111,69 @@ static bool Save_Main(FILE *fp, char *description)
 	if (!Save_Chunk(fp, "ODUN", &UnitNew_Save)) return false;
 
 	/* Write the total length of all data in the FORM chunk */
-	length = ftell(fp) - 8;
-	fseek(fp, 4, SEEK_SET);
+	long end = ftell(fp);
+	if (end < 8 || fseek(fp, 4, SEEK_SET) != 0) return false;
+	length = end - 8;
 	lengthSwapped = HTOBE32(length);
 	if (fwrite(&lengthSwapped, 4, 1, fp) != 1) return false;
-
-	return true;
+	return fseek(fp, end, SEEK_SET) == 0;
 }
+
+#ifdef __3DS__
+bool SaveGame_WriteStream(FILE *fp, char *description)
+{
+	g_validateStrictIfZero++;
+	bool saved = Save_Main(fp, description);
+	g_validateStrictIfZero--;
+	return saved;
+}
+
+static void SaveGame_MakePaths(const char *filename, char path[1024], char backup[1028])
+{
+	File_GetPersonalPath(path, 1024, filename);
+	snprintf(backup, 1028, "%s.BAK", path);
+}
+
+void SaveGame_RecoverFile(const char *filename)
+{
+	char path[1024], backup[1028];
+	struct stat info;
+
+	SaveGame_MakePaths(filename, path, backup);
+	/* A previous session may have stopped between the two FAT renames. */
+	if (stat(path, &info) != 0 && errno == ENOENT) rename(backup, path);
+}
+
+static bool SaveGame_Commit(const char *filename, char *description)
+{
+	char path[1024], backup[1028], pending[1028];
+	struct stat info;
+
+	SaveGame_MakePaths(filename, path, backup);
+	snprintf(pending, sizeof(pending), "%s.NEW", path);
+
+	FILE *fp = fopen(pending, "wb");
+	if (fp == NULL) return false;
+
+	bool saved = SaveGame_WriteStream(fp, description);
+	if (fclose(fp) != 0) saved = false;
+
+	bool movedOld = false;
+	if (saved && stat(path, &info) == 0) {
+		/* The SD filesystem may refuse to rename over an existing file. */
+		saved = (remove(backup) == 0 || errno == ENOENT) && rename(path, backup) == 0;
+		movedOld = saved;
+	} else if (saved && errno != ENOENT) {
+		saved = false;
+	}
+
+	if (saved && rename(pending, path) == 0) return true;
+
+	if (movedOld) rename(backup, path);
+	remove(pending);
+	return false;
+}
+#endif
 
 /**
  * Save the game to a filename
@@ -123,9 +184,6 @@ static bool Save_Main(FILE *fp, char *description)
  */
 bool SaveGame_SaveFile(char *filename, char *description)
 {
-	FILE *fp;
-	bool res;
-
 	/* In debug-scenario mode, the whole map is uncovered. Cover it now in
 	 *  the savegame based on the current position of the units and
 	 *  structures. */
@@ -170,17 +228,22 @@ bool SaveGame_SaveFile(char *filename, char *description)
 		}
 	}
 
-	fp = fopendatadir(SEARCHDIR_PERSONAL_DATA_DIR, filename, "wb");
+#ifdef __3DS__
+	if (SaveGame_Commit(filename, description)) return true;
+	Error("Error while writing savegame '%s'.\n", filename);
+	return false;
+#else
+	FILE *fp = fopendatadir(SEARCHDIR_PERSONAL_DATA_DIR, filename, "wb");
 	if (fp == NULL) {
 		Error("Failed to open file '%s' for writing.\n", filename);
 		return false;
 	}
 
 	g_validateStrictIfZero++;
-	res = Save_Main(fp, description);
+	bool res = Save_Main(fp, description);
 	g_validateStrictIfZero--;
 
-	fclose(fp);
+	if (fclose(fp) != 0) res = false;
 
 	if (!res) {
 		/* TODO -- Also remove the savegame now */
@@ -190,4 +253,5 @@ bool SaveGame_SaveFile(char *filename, char *description)
 	}
 
 	return true;
+#endif
 }

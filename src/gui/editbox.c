@@ -55,7 +55,11 @@ static void GUI_EditBox_BlinkCursor(uint16 positionX, bool resetBlink)
 uint16 GUI_EditBox(char *text, uint16 maxLength, uint16 widgetID, Widget *w, uint16 (*tickProc)(void), bool paint)
 {
 #ifdef __3DS__
- return GUI_3DS_InputText(text, maxLength, widgetID == 19 ? "Name for the Hall of Fame" : "Enter your answer", "OK") ? 0x2B : 0x6E;
+ return GUI_3DS_InputText(text, maxLength,
+  GUI_3DS_IsLithuanian()
+   ? (widgetID == 19 ? "Vardas į Šlovės lentą" : "Įveskite atsakymą")
+   : (widgetID == 19 ? "Name for the Hall of Fame" : "Enter your answer"),
+  "OK") ? 0x2B : 0x6E;
 #endif
 	Screen oldScreenID;
 	uint16 oldWidgetID;
