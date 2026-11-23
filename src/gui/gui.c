@@ -1913,14 +1913,13 @@ uint8 GUI_PickHouse(void)
 
 		GUI_Mouse_Hide_Safe();
 		GUI_Screen_Copy(0, 0, 0, 0, SCREEN_WIDTH / 8, SCREEN_HEIGHT, SCREEN_1, SCREEN_0);
-		GUI_SetPaletteAnimated(g_palette1, 15);
-		GUI_Mouse_Show_Safe();
-
 #ifdef __3DS__
 		g_3dsHousePickerActive = true;
 		GUI_3DS_TakeHouseChoice();
 		Input_History_Clear();
 #endif
+		GUI_SetPaletteAnimated(g_palette1, 15);
+		GUI_Mouse_Show_Safe();
 		for (houseID = HOUSE_INVALID; houseID == HOUSE_INVALID; sleepIdle()) {
 			uint16 key = GUI_Widget_HandleEvents(w);
 
@@ -1945,6 +1944,7 @@ uint8 GUI_PickHouse(void)
 		if (houseID == HOUSE_INVALID) {
 			g_3dsHouseBack = false;
 			g_3dsHousePickerActive = false;
+			GFX_ClearBlock(SCREEN_0);
 			while (w != NULL) { Widget *next = w->next; free(w); w = next; }
 			GUI_Mouse_Hide_Safe();
 			Input_History_Clear();

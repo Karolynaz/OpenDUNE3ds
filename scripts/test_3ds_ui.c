@@ -214,6 +214,14 @@ int main(void)
 	GUI_3DS_HandleBottomTouch(260,145); assert(GUI_3DS_TakeHouseChoice()==0x8003);
 	g_3dsHousePickerActive=false;
 	GUI_3DS_SetTitleActive(false);
+	/* GM_PICKHOUSE transition from in-game (SELECTIONTYPE_STRUCTURE) must never duplicate SCREEN_0 onto the bottom screen. */
+	g_selectionType=SELECTIONTYPE_STRUCTURE;
+	memset(screens[0], 77, sizeof(screens[0]));
+	assert(!GUI_3DS_IsDialog());
+	assert(GUI_3DS_IsCutsceneOrBriefing());
+	GUI_3DS_RenderTopScreen(); GUI_3DS_RenderBottomScreen();
+	assert(g_topScreenBuffer[20*400+40]==77);
+	assert(g_bottomScreenBuffer[20*320+40]==0 && g_bottomScreenBuffer[120*320+160]==0);
 
 	ObjectInfo info={0}; info.available=1; info.spriteID=1;
 	uint8 sprite=0; sprites[1]=&sprite;

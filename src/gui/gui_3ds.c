@@ -754,7 +754,7 @@ bool GUI_3DS_IsCutsceneOrBriefing(void)
 	    g_selectionType == SELECTIONTYPE_UNKNOWN6) {
 		return true;
 	}
-	if (g_gameMode != GM_NORMAL && g_gameMode != GM_MENU && g_gameMode != GM_PICKHOUSE) {
+	if (g_gameMode != GM_NORMAL && g_gameMode != GM_MENU) {
 		return true;
 	}
 	return false;
@@ -773,7 +773,7 @@ bool GUI_3DS_IsFactoryWindow(void)
 bool GUI_3DS_IsDialog(void)
 {
 	if (g_3dsHousePickerActive || s_houseConfirmID != 0xFF) return false;
-	return (g_widgetLinkedListTail != NULL || g_gameMode == GM_PICKHOUSE);
+	return (g_widgetLinkedListTail != NULL);
 }
 
 bool GUI_3DS_IsMenuOrDialogActive(void)

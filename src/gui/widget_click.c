@@ -826,13 +826,23 @@ bool GUI_Widget_Options_Click(Widget *w)
 
 	g_textDisplayNeedsUpdate = true;
 #ifdef __3DS__
+	if (g_gameMode != GM_NORMAL || !g_running) {
+		GFX_ClearBlock(SCREEN_0);
+	}
 	GUI_3DS_SetWindow(NULL);
 #endif
 	g_widgetLinkedListTail = NULL;
 	g_viewport_forceRedraw = true;
 
+#ifdef __3DS__
+	if (g_gameMode == GM_NORMAL && g_running) {
+		Sprites_LoadTiles();
+		GUI_DrawInterfaceAndRadar(SCREEN_0);
+	}
+#else
 	Sprites_LoadTiles();
 	GUI_DrawInterfaceAndRadar(SCREEN_0);
+#endif
 
 	UnshadeScreen();
 

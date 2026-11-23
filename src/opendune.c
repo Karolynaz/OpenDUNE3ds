@@ -1159,6 +1159,10 @@ static void GameLoop_Main(void)
 		}
 
 		if (g_gameMode == GM_PICKHOUSE) {
+#ifdef __3DS__
+			GUI_ChangeSelectionType(SELECTIONTYPE_INTRO);
+			GFX_ClearBlock(SCREEN_0);
+#endif
 			Music_Play(28);
 
 			g_playerHouseID = HOUSE_MERCENARY;
