@@ -42,9 +42,9 @@ All screenshots below were captured directly from the Nintendo 3DS build running
 
 ### Gameplay
 
-| Multi-Unit Selection | Spice Harvesting |
+| Dual Screen Gameplay | Multi-Unit Selection |
 | :---: | :---: |
-| ![Level 9 Gameplay with Tanks](docs/screenshots/gameplay_tanks.png) | ![Level 9 Spice Harvesting](docs/screenshots/gameplay_harvesting.png) |
+| ![Dual Screen Gameplay](docs/screenshots/dual_screen_gameplay.png) | ![Multi-Unit Selection](docs/screenshots/gameplay_tanks.png) |
 
 ### Building Construction, Buying Tanks & House Palace
 

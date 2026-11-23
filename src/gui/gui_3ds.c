@@ -2776,7 +2776,7 @@ static void PanelStructureStatusBox(Structure *s,const StructureInfo *si)
 	}
 }
 
-static bool DrawSquadPanel(void)
+ static bool DrawSquadPanel(void)
 {
  Unit *units[MAX_SELECTED_UNITS]; int count=0;
  for(uint16 i=0;i<g_selectedUnitsCount && count<MAX_SELECTED_UNITS;i++) {
@@ -2791,19 +2791,21 @@ static bool DrawSquadPanel(void)
   int x=177+(i%3)*46, y=60+(i/3)*41;
   if(i>=visible) {
    char more[16]; snprintf(more,sizeof(more),"+%d",count-visible);
-   BattleText(x+22,y+13,more,g_fontNew8p,TC_TEXT,false);
+   BattleText(x+22,y+18,more,g_fontNew8p,TC_TEXT,false);
    continue;
   }
   Unit *u=units[i];
-  /* Skip the white frame baked into the original portrait. */
-  BattlePortrait(x+2,y+2,40,28,g_table_unitInfo[u->o.type].o.spriteID,1);
-  DrawSelectionCorners(g_bottomScreenBuffer, g_bottomScreenUIMask, BOTTOM_WIDTH,
-    x+1, y+1, x+42, y+30, 6);
   uint32 maxHP=g_table_unitInfo[u->o.type].o.hitpoints;
-  uint8 color=u->o.hitpoints<=maxHP/4 ? TC_RED : u->o.hitpoints<=maxHP/2 ? TC_YELLOW : TC_GREEN;
-  int fill=maxHP ? min(40,(int)((uint32)u->o.hitpoints*40/maxHP)) : 0;
-  GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+32,x+41,y+36,TC_SHADOW);
-  if(fill) GUI_3DS_FillRect(g_bottomScreenBuffer,320,x+2,y+32,x+1+fill,y+36,color);
+  uint32 hp=min((uint32)u->o.hitpoints,maxHP);
+  uint8 color=hp<=maxHP/4 ? TC_RED : hp<=maxHP/2 ? TC_YELLOW : TC_GREEN;
+  int fill=maxHP ? min(40,(int)(hp*40/maxHP)) : 0;
+  /* Health bar above unit portrait matches the top-screen unit marker style. */
+  DrawMarkerRect(g_bottomScreenBuffer, g_bottomScreenUIMask, BOTTOM_WIDTH, x+1, y, x+42, y+4, TC_BLACK);
+  if(fill>0) DrawMarkerRect(g_bottomScreenBuffer, g_bottomScreenUIMask, BOTTOM_WIDTH, x+2, y+1, x+1+fill, y+3, color);
+  /* Skip the white frame baked into the original portrait. */
+  BattlePortrait(x+2,y+7,40,28,g_table_unitInfo[u->o.type].o.spriteID,1);
+  DrawSelectionCorners(g_bottomScreenBuffer, g_bottomScreenUIMask, BOTTOM_WIDTH,
+    x+1, y+6, x+42, y+35, 6);
   PanelAddHit(x,y,44,39,HIT_SQUAD_UNIT,u->o.index);
  }
  return true;

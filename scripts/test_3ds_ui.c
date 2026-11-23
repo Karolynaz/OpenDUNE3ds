@@ -408,12 +408,13 @@ int main(void)
     g_selectedUnitsCount=12; g_unitSelected=&squad[0]; g_selectionType=SELECTIONTYPE_UNIT;
     GUI_3DS_RenderBottomScreen(); assert(s_panelHitCount==12);
     assert(s_panelHits[11].x==269 && s_panelHits[11].y==183);
-    assert(g_bottomScreenBuffer[61*320+178]==TC_WHITE);
-    assert(g_bottomScreenBuffer[61*320+199]==TC_FACE); /* Open between the corners. */
-    assert(g_bottomScreenBuffer[75*320+178]==TC_FACE);
+    assert(g_bottomScreenBuffer[66*320+178]==TC_WHITE);
+    assert(g_bottomScreenBuffer[66*320+199]==TC_FACE); /* Open between the corners. */
+    assert(g_bottomScreenBuffer[80*320+178]==TC_FACE);
     GUI_3DS_HandleBottomTouch(235,80); assert(individualSelection==&squad[1]);
     g_selectedUnitsCount=22; GUI_3DS_RenderBottomScreen(); assert(s_panelHitCount==11);
-    assert(g_bottomScreenBuffer[(60+32)*320+179]==TC_RED); /* Per-unit health. */
+    assert(g_bottomScreenBuffer[60*320+178]==TC_BLACK && g_bottomScreenBuffer[64*320+178]==TC_BLACK); /* Bordered health bar above corners. */
+    assert(g_bottomScreenBuffer[61*320+179]==TC_RED && g_bottomScreenBuffer[65*320+178]==TC_FACE); /* Per-unit health + 1px gap. */
     Preview("squad-overflow");
     individualSelection=NULL; GUI_3DS_HandleBottomTouch(294,200); assert(individualSelection==NULL);
     squad[1].o.flags.s.allocated=false;
