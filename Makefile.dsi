@@ -1,0 +1,169 @@
+# Nintendo DSi (TWL) Makefile for dunedsi
+
+DEVKITPRO ?= /Users/karolynaz/devkitpro
+DEVKITARM ?= $(DEVKITPRO)/devkitARM
+LIBNDS    ?= $(DEVKITPRO)/libnds
+CALICO    ?= $(DEVKITPRO)/calico
+
+CC        := $(DEVKITARM)/bin/arm-none-eabi-gcc
+NDSTOOL   := $(DEVKITPRO)/tools/bin/ndstool
+ARM7_ELF  := $(CALICO)/bin/ds7_dsi.elf
+ICON_BMP  := os/banner/icon_dsi_32x32.bmp
+
+TARGET    := dunedsi
+.DEFAULT_GOAL := all
+BUILD_DIR := build_dsi
+
+ARCH      := -march=armv5te -mtune=arm946e-s -mthumb -mthumb-interwork
+ARCH_ARM  := -march=armv5te -mtune=arm946e-s -marm -mthumb-interwork
+CFLAGS    := $(ARCH) -std=gnu11 -O2 -fomit-frame-pointer -fno-strict-aliasing \
+             -ffunction-sections -fdata-sections -Wall -Wno-deprecated-declarations -MMD -MP \
+             -D__3DS__ -D__NDS__ -DARM9 \
+             -iquote include -iquote src \
+             -I$(LIBNDS)/include -I$(CALICO)/include
+CFLAGS_ARM := $(ARCH_ARM) -std=gnu11 -O3 -fomit-frame-pointer -fno-strict-aliasing \
+              -ffunction-sections -fdata-sections -Wall -Wno-deprecated-declarations -MMD -MP \
+              -D__3DS__ -D__NDS__ -DARM9 \
+              -iquote include -iquote src \
+              -I$(LIBNDS)/include -I$(CALICO)/include
+
+LDFLAGS   := $(ARCH) -specs=$(CALICO)/share/ds9.specs -O2 \
+             -L$(LIBNDS)/lib -L$(CALICO)/lib \
+             -lfat -lnds9 -lcalico_ds9 -lm
+
+SRCS := \
+	src/animation.c \
+	src/audio/driver.c \
+	src/audio/dsp_dsi.c \
+	src/audio/midi_dsi.c \
+	src/audio/midi_dsi_bank.c \
+	src/audio/mt32mpu.c \
+	src/audio/sound.c \
+	src/codec/format40.c \
+	src/codec/format80.c \
+	src/config.c \
+	src/crashlog/crashlog.c \
+	src/crashlog/crashlog_none.c \
+	src/cutscene.c \
+	src/explosion.c \
+	src/file.c \
+	src/gfx.c \
+	src/gui/editbox.c \
+	src/gui/font.c \
+	src/gui/gui.c \
+	src/gui/gui_3ds.c \
+	src/gui/keyboard_dsi.c \
+	src/gui/mentat.c \
+	src/gui/security.c \
+	src/gui/viewport.c \
+	src/gui/widget.c \
+	src/gui/widget_click.c \
+	src/gui/widget_draw.c \
+	src/house.c \
+	src/ini.c \
+	src/inifile.c \
+	src/input/input.c \
+	src/input/input_dsi.c \
+	src/input/mouse.c \
+	src/load.c \
+	src/map.c \
+	src/object.c \
+	src/opendune.c \
+	src/os/endian.c \
+	src/os/error.c \
+	src/os/readdir.c \
+	src/pool/house.c \
+	src/pool/structure.c \
+	src/pool/team.c \
+	src/pool/unit.c \
+	src/rev.c \
+	src/save.c \
+	src/saveload/house.c \
+	src/saveload/info.c \
+	src/saveload/map.c \
+	src/saveload/object.c \
+	src/saveload/saveload.c \
+	src/saveload/scenario.c \
+	src/saveload/scriptengine.c \
+	src/saveload/structure.c \
+	src/saveload/team.c \
+	src/saveload/unit.c \
+	src/scenario.c \
+	src/script/general.c \
+	src/script/script.c \
+	src/script/structure.c \
+	src/script/team.c \
+	src/script/unit.c \
+	src/sprites.c \
+	src/string.c \
+	src/structure.c \
+	src/table/actioninfo.c \
+	src/table/animation.c \
+	src/table/explosion.c \
+	src/table/houseanimation.c \
+	src/table/houseinfo.c \
+	src/table/landscapeinfo.c \
+	src/table/movementtype.c \
+	src/table/selectiontype.c \
+	src/table/sound.c \
+	src/table/strings_lt.c \
+	src/table/structureinfo.c \
+	src/table/teamaction.c \
+	src/table/tilediff.c \
+	src/table/unitinfo.c \
+	src/table/widget.c \
+	src/table/widgetinfo.c \
+	src/table/windowdesc.c \
+	src/team.c \
+	src/tile.c \
+	src/timer.c \
+	src/tools.c \
+	src/unit.c \
+	src/unit_3ds.c \
+	src/video/video_dsi.c \
+	src/video/video_fps.c \
+	src/wsa.c
+
+OBJS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRCS))
+
+-include $(OBJS:.o=.d)
+
+all: $(TARGET).nds
+
+HOT_ARM_OBJS := \
+	$(BUILD_DIR)/video/video_dsi.o \
+	$(BUILD_DIR)/gui/gui.o \
+	$(BUILD_DIR)/gui/gui_3ds.o \
+	$(BUILD_DIR)/gui/viewport.o \
+	$(BUILD_DIR)/codec/format80.o \
+	$(BUILD_DIR)/gfx.o \
+	$(BUILD_DIR)/sprites.o \
+	$(BUILD_DIR)/audio/midi_dsi.o
+
+$(HOT_ARM_OBJS): $(BUILD_DIR)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	@echo "CC [ARM -O3] $<"
+	@$(CC) $(CFLAGS_ARM) -c $< -o $@
+
+$(BUILD_DIR)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/$(TARGET).elf: $(OBJS)
+	@echo "LINK $@"
+	@$(CC) $(OBJS) $(LDFLAGS) -o $@
+	@$(DEVKITARM)/bin/arm-none-eabi-size $@
+
+$(TARGET).nds: $(BUILD_DIR)/$(TARGET).elf $(ICON_BMP)
+	@echo "NDSTOOL $@"
+	@$(NDSTOOL) -c $@ -9 $< -7 $(ARM7_ELF) -b $(ICON_BMP) "Dune II;Dune II for Nintendo DSi;Karolynaz"
+	@python3 scripts/patch_dsi_hb_sig.py $@
+	@$(NDSTOOL) -f $@
+	@mkdir -p "test builds"
+	@cp -f $@ "test builds/$(TARGET).nds"
+
+clean:
+	@rm -rf $(BUILD_DIR) $(TARGET).nds
+
+.PHONY: all clean

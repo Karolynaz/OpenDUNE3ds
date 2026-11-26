@@ -102,7 +102,8 @@ static inline void Cairo_DrawTextClipped(uint8_t *buf, int stride, int cx, int b
 
 static inline void Cairo_DrawText(uint8_t *buf, int stride, int cx, int baseY, const char *text, uint8_t color, int shadowColor)
 {
-    Cairo_DrawTextClipped(buf, stride, cx, baseY, text, -1, color, shadowColor, 0, 240);
+    int maxH = (stride == 256) ? 192 : 240;
+    Cairo_DrawTextClipped(buf, stride, cx, baseY, text, -1, color, shadowColor, 0, maxH);
 }
 
 /* Find the painted bounds of a block relative to its centre x and first baseline. */

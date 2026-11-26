@@ -29,7 +29,11 @@
 #include <FindDirectory.h>
 #include <StorageDefs.h>
 #endif /* HAIKU */
-#ifdef __3DS__
+#ifdef __NDS__
+#include <nds.h>
+#include <fat.h>
+#include "file_3ds.h"
+#elif defined(__3DS__)
 #include <3ds.h>
 #include "file_3ds.h"
 #endif
@@ -511,6 +515,7 @@ static bool File_MakeDirectory(char *dir)
 		return ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
 	}
 #else /* _WIN32 */
+	if (strcmp(dir, ".") == 0 || dir[0] == '\0') return true;
 	if (stat(dir, &st) == 0) {
 		return S_ISDIR(st.st_mode);
 	}
@@ -520,6 +525,11 @@ static bool File_MakeDirectory(char *dir)
 	/* create intermediate folders if they do not exist */
 	success = (SHCreateDirectoryEx(NULL, dir, NULL) == ERROR_SUCCESS);
 #else /* _WIN32 */
+	/* Skip device prefix such as "sd:/", "fat:/", "sdmc:/" */
+	{
+		char *colon = strchr(s, ':');
+		if (colon != NULL && colon[1] == '/') s = colon + 1;
+	}
 	while (success) {
 		s = strchr(s + 1, '/');
 
@@ -581,6 +591,30 @@ bool File_Init(void)
 		if (find_directory(B_USER_SETTINGS_DIRECTORY, 0, true, buf, sizeof(buf)) == B_OK) {
 			snprintf(g_personal_data_dir, sizeof(g_personal_data_dir), "%s/opendune/savegames", buf);
 		}
+#elif defined(__NDS__)
+		(void)homedir;
+		{
+			static bool s_fatInited = false;
+			static bool s_fatOk = false;
+			if (!s_fatInited) {
+				s_fatOk = fatInitDefault();
+				s_fatInited = true;
+			}
+			if (!s_fatOk) {
+				Error("fatInitDefault() failed (no SD card or DLDI available).\n");
+				return false;
+			}
+			const char *dd = File_3DS_FindDataDirectory();
+			size_t len = strlen(dd);
+			if (len > 5 && strcmp(dd + len - 5, "/data") == 0) {
+				size_t parentLen = len - 5;
+				if (parentLen >= sizeof(g_personal_data_dir)) parentLen = sizeof(g_personal_data_dir) - 1;
+				memcpy(g_personal_data_dir, dd, parentLen);
+				g_personal_data_dir[parentLen] = '\0';
+			} else {
+				snprintf(g_personal_data_dir, sizeof(g_personal_data_dir), "%s", dd);
+			}
+		}
 #elif defined(__3DS__)
 		(void)homedir;
 		strcpy(g_personal_data_dir, "sdmc:/3ds/dune3ds");
@@ -641,7 +675,10 @@ bool File_Init(void)
 		}
     }
 #endif /* OSX */
-#ifdef __3DS__
+#ifdef __NDS__
+	const char *dataDir3DS = File_3DS_FindDataDirectory();
+	snprintf(g_dune_data_dir, sizeof(g_dune_data_dir), "%s", dataDir3DS);
+#elif defined(__3DS__)
 	romfsInit();
 	const char *dataDir3DS = File_3DS_FindDataDirectory();
 	strncpy(g_dune_data_dir, dataDir3DS, sizeof(g_dune_data_dir));
@@ -687,7 +724,7 @@ void File_Uninit(void)
 		s_files_in_pak = e->next;
 		free(e);
 	}
-#ifdef __3DS__
+#if defined(__3DS__) && !defined(__NDS__)
 	romfsExit();
 #endif
 }
@@ -949,11 +986,18 @@ void File_Create_Personal(const char *filename)
 uint32 File_ReadBlockFile_Ex(enum SearchDirectory dir, const char *filename, void *buffer, uint32 length)
 {
 	uint8 index;
+#ifdef __NDS__
+	extern void midi_3ds_pump(void);
+	if (length >= 8192) midi_3ds_pump();
+#endif
 
 	index = File_Open_Ex(dir, filename, FILE_MODE_READ);
 	if (index == FILE_INVALID) return 0;
 	length = File_Read(index, buffer, length);
 	File_Close(index);
+#ifdef __NDS__
+	if (length >= 8192) midi_3ds_pump();
+#endif
 	return length;
 }
 
@@ -968,6 +1012,10 @@ void *File_ReadWholeFile(const char *filename)
 	uint8 index;
 	uint32 length;
 	void *buffer;
+#ifdef __NDS__
+	extern void midi_3ds_pump(void);
+	midi_3ds_pump();
+#endif
 
 	index = File_Open(filename, FILE_MODE_READ);
 	if (index == FILE_INVALID) return NULL;
@@ -987,6 +1035,9 @@ void *File_ReadWholeFile(const char *filename)
 	((char *)buffer)[length] = '\0';
 
 	File_Close(index);
+#ifdef __NDS__
+	midi_3ds_pump();
+#endif
 
 	return buffer;
 }

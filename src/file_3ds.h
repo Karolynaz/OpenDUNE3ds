@@ -7,7 +7,15 @@
 static const char *File_3DS_FindDataDirectory(void)
 {
 	static const char *directories[] = {
+#ifdef __NDS__
+		".", "./data",
+		"sd:/nds/dunedsi/data", "sd:/nds/dunedsi",
+		"sd:/dunedsi/data", "sd:/dunedsi",
+		"fat:/nds/dunedsi/data", "fat:/nds/dunedsi",
+		"sd:/dune2", "fat:/dune2"
+#else
 		"sdmc:/3ds/dune3ds/data", "sdmc:/3ds/dune3ds", "romfs:/data", "romfs:"
+#endif
 	};
 	/* Accept the original archive or an unpacked core graphics resource.
 	 * Probe both cases because ROMFS paths are case sensitive. */

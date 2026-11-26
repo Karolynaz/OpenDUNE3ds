@@ -4,8 +4,13 @@
 
 #define POPUP_UI_MASK 5
 
+#ifdef __NDS__
+#define POPUP_WIDTH  236
+#define POPUP_HEIGHT 152
+#else
 #define POPUP_WIDTH  284
 #define POPUP_HEIGHT 173
+#endif
 
 enum {
 	POPUP_BLACK,        /* 0: #000000 text shadow */

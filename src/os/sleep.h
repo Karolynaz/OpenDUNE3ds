@@ -7,6 +7,18 @@
 	#include <windows.h>
 	#define sleep(x) Sleep(x * 1000)
 	#define msleep(x) Sleep(x)
+#elif defined(__NDS__)
+	#include <calico/system/tick.h>
+	#include <calico/system/thread.h>
+	static inline void nds_msleep(unsigned int ms) {
+		u64 end = tickGetCount() + ((u64)ms * (u64)TICK_FREQ) / 1000ULL;
+		while (tickGetCount() < end) {
+			if (ms >= 16) threadWaitForVBlank();
+			else threadYield();
+		}
+	}
+	#define sleep(x) nds_msleep((unsigned int)(x) * 1000u)
+	#define msleep(x) nds_msleep((unsigned int)(x))
 #elif defined(__3DS__)
 	#include <3ds.h>
 	#define sleep(x) svcSleepThread((u64)(x) * 1000000000ULL)

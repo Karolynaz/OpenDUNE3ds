@@ -1296,6 +1296,12 @@ static void GameLoop_Main(void)
 				GameLoop_House();
 
 				GUI_DrawScreen(SCREEN_0);
+#ifdef __NDS__
+				{
+					extern void midi_3ds_pump(void);
+					midi_3ds_pump();
+				}
+#endif
 #ifdef __3DS__
 			}
 #endif
@@ -1424,7 +1430,27 @@ void exit_handler(void)
 }
 #endif /* TOS */
 
-#ifdef __3DS__
+#if defined(__NDS__)
+#include <nds.h>
+#include <calico/nds/pm.h>
+static void NDS_ShowErrorAndWait(const char *msg)
+{
+	consoleDemoInit();
+	iprintf("\n  Dune II for Nintendo DSi\n");
+	iprintf("  ------------------------\n\n");
+	iprintf("  %s\n\n", msg);
+	iprintf("  Copy Dune II .PAK files to:\n");
+	iprintf("   sd:/nds/dunedsi/\n");
+	iprintf("  or into the same folder as\n");
+	iprintf("   dunedsi.nds\n\n");
+	iprintf("  Press any button to exit.\n");
+	while (pmMainLoop()) {
+		swiWaitForVBlank();
+		scanKeys();
+		if (keysDown()) break;
+	}
+}
+#elif defined(__3DS__)
 #include <3ds.h>
 u32 __stacksize__ = 256 * 1024;
 #endif
@@ -1440,6 +1466,10 @@ int main(int argc, char **argv)
 	int scaling_factor = 2;
 	int frame_rate = 60;
 	char filter_text[64];
+#ifdef __NDS__
+	defaultExceptionHandler();
+	if (!isDSiMode()) g_unpackSHPonLoad = false;
+#endif
 #if defined(_WIN32)
 	#if defined(__MINGW32__) && defined(__STRICT_ANSI__)
 	#if 0 /* NOTE : disabled because it generates warnings when cross compiling
@@ -1510,6 +1540,9 @@ int main(int argc, char **argv)
 	Debug("  g_starPortEnforceUnitLimit = %d\n", (int)g_starPortEnforceUnitLimit);
 
 	if (!File_Init()) {
+#ifdef __NDS__
+		NDS_ShowErrorAndWait("Dune II data files not found!");
+#endif
 		return 1;
 	}
 
@@ -1524,6 +1557,9 @@ int main(int argc, char **argv)
 	/* Writing config to dune.cfg */
 	if (commit_dune_cfg && !Config_Write("dune.cfg", &g_config)) {
 		Error("Error writing to dune.cfg file.\n");
+#ifdef __NDS__
+		NDS_ShowErrorAndWait("Error writing dune.cfg!");
+#endif
 		return 1;
 	}
 
@@ -1547,7 +1583,12 @@ int main(int argc, char **argv)
 
 	frame_rate = IniFile_GetInteger("framerate", 60);
 
-	if (!OpenDune_Init(scaling_factor, scale_filter, frame_rate)) exit(1);
+	if (!OpenDune_Init(scaling_factor, scale_filter, frame_rate)) {
+#ifdef __NDS__
+		NDS_ShowErrorAndWait("OpenDune_Init failed (Font or Video)!");
+#endif
+		exit(1);
+	}
 
 	g_mouseDisabled = 0;
 

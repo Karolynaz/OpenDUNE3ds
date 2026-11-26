@@ -26,7 +26,17 @@
 bool ReadDir_ProcessAllFiles(const char * dirpath, bool (*callback)(const char *name, const char *path, uint32 size))
 {
 	struct dirent *ep;
+#ifdef __NDS__
+	char openPath[1024];
+	snprintf(openPath, sizeof(openPath), "%s", dirpath);
+	size_t olen = strlen(openPath);
+	if (olen > 1 && openPath[olen - 1] == '/' && openPath[olen - 2] != ':') {
+		openPath[olen - 1] = '\0';
+	}
+	DIR *dp = opendir(openPath);
+#else
 	DIR *dp = opendir(dirpath);
+#endif
 	if (dp == NULL) {
 		return false;
 	}

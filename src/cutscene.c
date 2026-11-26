@@ -1155,7 +1155,8 @@ static void LaunchStar_SetupPalette(uint8 *pal)
 static inline void LaunchStar_PutPx(uint8 *buf, int stride, int x, int y, int baseCol, int fadeStep)
 {
 	int col = baseCol + fadeStep;
-	if (col <= 255 && x >= 0 && x < stride && y >= 0 && y < 240) {
+	int maxH = (stride == TOP_WIDTH) ? TOP_HEIGHT : BOTTOM_HEIGHT;
+	if (col <= 255 && x >= 0 && x < stride && y >= 0 && y < maxH) {
 		uint8 cur = buf[y * stride + x];
 		if (cur == 0 || (cur >= 248 && col < (int)cur)) {
 			buf[y * stride + x] = (uint8)col;
@@ -1257,6 +1258,50 @@ static void LaunchStarfield_StepAndDraw(LaunchStar *topStars, int topCount, Laun
 	}
 }
 
+static void LaunchBlitTop(const uint8 *src, int srcH, int offX, int offY)
+{
+	if (src == NULL || g_topScreenBuffer == NULL) return;
+#ifdef __NDS__
+	int dstH = (srcH * 4) / 5;
+	for (int y = 0; y < dstH; y++) {
+		int dy = offY + y;
+		if (dy < 0 || dy >= TOP_HEIGHT) continue;
+		const uint8 *sRow = src + ((y * 5) / 4) * 320;
+		uint8 *dRow = g_topScreenBuffer + dy * TOP_WIDTH;
+		for (int x = 0; x < TOP_WIDTH; x++) {
+			int dx = offX + x;
+			if (dx >= 0 && dx < TOP_WIDTH) {
+				uint8 px = sRow[(x * 5) / 4];
+				if (px != 0) dRow[dx] = px;
+			}
+		}
+	}
+#else
+	for (int y = 0; y < srcH; y++) {
+		int dy = offY + y;
+		if (dy < 0 || dy >= TOP_HEIGHT) continue;
+		const uint8 *sRow = src + y * 320;
+		uint8 *dRow = g_topScreenBuffer + dy * TOP_WIDTH;
+		for (int x = 0; x < 320; x++) {
+			int dx = 40 + offX + x;
+			if (dx >= 0 && dx < TOP_WIDTH && sRow[x] != 0) dRow[dx] = sRow[x];
+		}
+	}
+#endif
+}
+
+static void LaunchBlitVirginBottom(const uint8 *virginBuf)
+{
+	if (virginBuf == NULL || g_bottomScreenBuffer == NULL) return;
+	for (int y = 0; y < 200; y++) {
+		const uint8 *sRow = virginBuf + y * 320;
+		uint8 *dRow = g_bottomScreenBuffer + (y + 20) * BOTTOM_WIDTH;
+		for (int x = 0; x < 320; x++) {
+			if (sRow[x] != 0) dRow[x] = sRow[x];
+		}
+	}
+}
+
 void GameLoop_3DS_LaunchSequence(void)
 {
 	Screen oldScreenID = GFX_Screen_SetActive(SCREEN_0);
@@ -1355,6 +1400,7 @@ void GameLoop_3DS_LaunchSequence(void)
 		void *wsa = WSA_LoadFile("WESTWOOD.WSA", GFX_Screen_Get_ByIndex(SCREEN_1),
 		                         GFX_Screen_GetSize_ByIndex(SCREEN_1) + GFX_Screen_GetSize_ByIndex(SCREEN_2) + GFX_Screen_GetSize_ByIndex(SCREEN_3), true);
 		const uint8 *wsaScreen = (const uint8 *)GFX_Screen_Get_ByIndex(SCREEN_0);
+		const int wwY = (TOP_HEIGHT - ((112 * TOP_HEIGHT) / 240)) / 2;
 
 		while (wsa != NULL && WSA_DisplayFrame(wsa, frame++, 0, 0, SCREEN_0)) {
 			for (int sub = 0; sub < 3; sub++) {
@@ -1363,22 +1409,8 @@ void GameLoop_3DS_LaunchSequence(void)
 					goto launch_finish;
 				}
 				LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
-				for (int y = 0; y < 112; y++) {
-					const uint8 *sRow = wsaScreen + y * 320;
-					uint8 *dRow = g_topScreenBuffer + (y + 64) * TOP_WIDTH + 40;
-					for (int x = 0; x < 320; x++) {
-						if (sRow[x] != 0) dRow[x] = sRow[x];
-					}
-				}
-				if (virginBuf != NULL) {
-					for (int y = 0; y < 200; y++) {
-						const uint8 *sRow = virginBuf + y * 320;
-						uint8 *dRow = g_bottomScreenBuffer + (y + 20) * BOTTOM_WIDTH;
-						for (int x = 0; x < 320; x++) {
-							if (sRow[x] != 0) dRow[x] = sRow[x];
-						}
-					}
-				}
+				LaunchBlitTop(wsaScreen, 112, 0, wwY);
+				LaunchBlitVirginBottom(virginBuf);
 				Timer_Sleep(2);
 			}
 		}
@@ -1387,22 +1419,8 @@ void GameLoop_3DS_LaunchSequence(void)
 		for (int hold = 0; hold < 60; hold++) {
 			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
 			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
-			for (int y = 0; y < 112; y++) {
-				const uint8 *sRow = wsaScreen + y * 320;
-				uint8 *dRow = g_topScreenBuffer + (y + 64) * TOP_WIDTH + 40;
-				for (int x = 0; x < 320; x++) {
-					if (sRow[x] != 0) dRow[x] = sRow[x];
-				}
-			}
-			if (virginBuf != NULL) {
-				for (int y = 0; y < 200; y++) {
-					const uint8 *sRow = virginBuf + y * 320;
-					uint8 *dRow = g_bottomScreenBuffer + (y + 20) * BOTTOM_WIDTH;
-					for (int x = 0; x < 320; x++) {
-						if (sRow[x] != 0) dRow[x] = sRow[x];
-					}
-				}
-			}
+			LaunchBlitTop(wsaScreen, 112, 0, wwY);
+			LaunchBlitVirginBottom(virginBuf);
 			Timer_Sleep(2);
 		}
 	}
@@ -1416,7 +1434,7 @@ void GameLoop_3DS_LaunchSequence(void)
 		for (int f = 0; f < 55; f++) {
 			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
 			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
-			GUI_3DS_DrawTitleTextTopCentered(110, presents, 147, 144);
+			GUI_3DS_DrawTitleTextTopCentered((TOP_HEIGHT - 20) / 2, presents, 147, 144);
 			Timer_Sleep(2);
 		}
 	}
@@ -1427,25 +1445,15 @@ void GameLoop_3DS_LaunchSequence(void)
 		const uint8 *titleArt = titleBuf;
 		const int planetSteps = 60;
 		const int titleSteps  = 45;
+		const int baseOffY = (TOP_HEIGHT - ((200 * TOP_HEIGHT) / 240)) / 2;
 
 		/* Step 4a: Planet flies in to the center of the top screen */
 		for (int step = 0; step <= planetSteps; step++) {
 			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
 			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
 
-			int planetX = 40 + ((planetSteps - step) * TOP_WIDTH) / planetSteps;
-			if (planetBuf != NULL) {
-				for (int y = 0; y < 200; y++) {
-					const uint8 *sRow = planetBuf + y * 320;
-					uint8 *dRow = g_topScreenBuffer + (y + 20) * TOP_WIDTH;
-					for (int x = 0; x < 320; x++) {
-						int dx = planetX + x;
-						if (dx >= 0 && dx < TOP_WIDTH && sRow[x] != 0) {
-							dRow[dx] = sRow[x];
-						}
-					}
-				}
-			}
+			int planetX = ((planetSteps - step) * TOP_WIDTH) / planetSteps;
+			LaunchBlitTop(planetBuf, 200, planetX, baseOffY);
 			Timer_Sleep(2);
 		}
 
@@ -1454,28 +1462,11 @@ void GameLoop_3DS_LaunchSequence(void)
 			if (Input_Keyboard_NextKey() != 0) goto launch_finish;
 			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, true, 0);
 
-			if (planetBuf != NULL) {
-				for (int y = 0; y < 200; y++) {
-					const uint8 *sRow = planetBuf + y * 320;
-					uint8 *dRow = g_topScreenBuffer + (y + 20) * TOP_WIDTH + 40;
-					for (int x = 0; x < 320; x++) {
-						if (sRow[x] != 0) dRow[x] = sRow[x];
-					}
-				}
-			}
+			LaunchBlitTop(planetBuf, 200, 0, baseOffY);
 
-			int logoOffsetY = -120 + (step * 140) / titleSteps; /* -120 .. +20 */
-			if (titleArt != NULL) {
-				for (int y = 0; y < 200; y++) {
-					int dy = logoOffsetY + y;
-					if (dy < 0 || dy >= TOP_HEIGHT) continue;
-					const uint8 *sRow = titleArt + y * 320;
-					uint8 *dRow = g_topScreenBuffer + dy * TOP_WIDTH + 40;
-					for (int x = 0; x < 320; x++) {
-						if (sRow[x] != 0) dRow[x] = sRow[x];
-					}
-				}
-			}
+			int startY = -(TOP_HEIGHT / 2);
+			int logoOffsetY = startY + (step * (baseOffY - startY)) / titleSteps;
+			LaunchBlitTop(titleArt, 200, 0, logoOffsetY);
 			Timer_Sleep(2);
 		}
 
@@ -1485,24 +1476,8 @@ void GameLoop_3DS_LaunchSequence(void)
 			int fadeStep = (f * 8) / 32;
 			LaunchStarfield_StepAndDraw(topStars, 38, botStars, 28, false, fadeStep);
 
-			if (planetBuf != NULL) {
-				for (int y = 0; y < 200; y++) {
-					const uint8 *sRow = planetBuf + y * 320;
-					uint8 *dRow = g_topScreenBuffer + (y + 20) * TOP_WIDTH + 40;
-					for (int x = 0; x < 320; x++) {
-						if (sRow[x] != 0) dRow[x] = sRow[x];
-					}
-				}
-			}
-			if (titleArt != NULL) {
-				for (int y = 0; y < 200; y++) {
-					const uint8 *sRow = titleArt + y * 320;
-					uint8 *dRow = g_topScreenBuffer + (y + 20) * TOP_WIDTH + 40;
-					for (int x = 0; x < 320; x++) {
-						if (sRow[x] != 0) dRow[x] = sRow[x];
-					}
-				}
-			}
+			LaunchBlitTop(planetBuf, 200, 0, baseOffY);
+			LaunchBlitTop(titleArt, 200, 0, baseOffY);
 			Timer_Sleep(2);
 		}
 	}

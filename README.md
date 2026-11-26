@@ -1,11 +1,11 @@
-<h1 align="center">OpenDUNE3ds (Dune II for Nintendo 3DS)</h1>
+<h1 align="center">OpenDUNE3ds (Dune II for Nintendo 3DS &amp; Nintendo DSi)</h1>
 
 <p align="center">
-  <strong>The 1992 godfather of real-time strategy, rebuilt around Nintendo 3DS's two screens and modern handheld controls.</strong>
+  <strong>The 1992 godfather of real-time strategy, rebuilt around Nintendo 3DS and Nintendo DSi dual screens and modern handheld controls.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Karolynaz/OpenDUNE3ds/releases/latest"><strong>Download Latest Release (.cia &amp; .3dsx)</strong></a>
+  <a href="https://github.com/Karolynaz/OpenDUNE3ds/releases/latest"><strong>Download Latest Release (.cia, .3dsx &amp; .nds)</strong></a>
   &nbsp;·&nbsp;
   <a href="#screenshots">Screenshots</a>
   &nbsp;·&nbsp;
@@ -80,19 +80,29 @@ Classic Dune II required selecting and moving units one by one. This port keeps 
 
 ## Installation
 
-You need a Nintendo 3DS / 2DS capable of running homebrew (CFW / Luma3DS) and **your own copy of the original *Dune II* data files**. Copyrighted game assets are **not included** in this repository or in releases.
+You need a homebrew-capable **Nintendo 3DS / 2DS** (CFW / Luma3DS) or **Nintendo DSi / DSi XL** (TWiLightMenu++ / unlaunch) and **your own copy of the original *Dune II* data files**. Copyrighted game assets are **not included** in this repository or in releases.
+
+### Nintendo 3DS / 2DS
 
 1. **Download the latest release** from the [Releases page](https://github.com/Karolynaz/OpenDUNE3ds/releases/latest):
-   - **`dune3ds.cia`** — to install directly onto your 3DS HOME Menu using **FBI** (recommended, includes the custom 3DS banner and icon).
-   - **`dune3ds.3dsx`** (+ `dune3ds.smdh`) — to launch via the **Homebrew Launcher**; place both files in `sdmc:/3ds/dune3ds/`.
+   - **`dune3ds.cia`** — install directly onto your 3DS HOME Menu using **FBI** (recommended, includes the custom 3DS banner and icon).
+   - **`dune3ds.3dsx`** (+ `dune3ds.smdh`) — launch via the **Homebrew Launcher**; place both files in `sdmc:/3ds/dune3ds/`.
 2. **Copy your original *Dune II* data files** onto your SD card into:
    ```text
    sdmc:/3ds/dune3ds/
    ```
    *(You can also place them inside `sdmc:/3ds/dune3ds/data/`.)*
-   Copy the `.PAK` files from your Dune II v1.07 installation (such as `DUNE.PAK`, `ENGLISH.PAK`, `ATRE.PAK`, `HARK.PAK`, `ORDOS.PAK`, `SCENARIO.PAK`, `MENTAT.PAK`, `INTRO.PAK`, `INTROVOC.PAK`, `FINALE.PAK`, `MERC.PAK`, `SOUND.PAK`, `VOC.PAK`, etc.).
+   Copy the `.PAK` files from your Dune II v1.07 installation (`DUNE.PAK`, `ENGLISH.PAK`, `ATRE.PAK`, `HARK.PAK`, `ORDOS.PAK`, `SCENARIO.PAK`, `MENTAT.PAK`, `INTRO.PAK`, `INTROVOC.PAK`, `FINALE.PAK`, `MERC.PAK`, `SOUND.PAK`, `VOC.PAK`, etc.).
    - Game saves (`_SAVE*.DAT`) and settings are stored automatically in `sdmc:/3ds/dune3ds/`.
 3. **Launch Dune II** from the 3DS HOME Menu (CIA) or Homebrew Launcher (3DSX) and enjoy!
+
+### Nintendo DSi / DSi XL (TWL Mode)
+
+1. **Download `dunedsi.nds`** from the [Releases page](https://github.com/Karolynaz/OpenDUNE3ds/releases/latest) and place it in any folder on your SD card (for example `sd:/roms/nds/dune/dunedsi.nds`).
+2. **Copy your original *Dune II* `.PAK` files** into the **same folder** next to `dunedsi.nds`.
+   - Music works **100% out of the box** via the built-in 16-bit SoundFont synthesizer — no extra music files are needed.
+   - *(Optional)* To show the Dune II cover image in **TWiLightMenu++**, copy `dunedsi.nds.png` from the release into `sd:/_nds/TWiLightMenu/boxart/dunedsi.nds.png`.
+3. **Launch `dunedsi.nds`** via **TWiLightMenu++** (runs natively in DSi TWL mode with 133 MHz CPU & 16 MB RAM).
 
 ---
 
@@ -100,13 +110,13 @@ You need a Nintendo 3DS / 2DS capable of running homebrew (CFW / Luma3DS) and **
 
 | Input | Battlefield | Menus / Production |
 | --- | --- | --- |
-| **Circle Pad** | Move cursor (radial aiming; adjustable speed in *Settings*) | Navigate menu items |
-| **D-Pad** | Fast camera scroll across the map | Navigate lists & 4×3 build grid |
+| **Circle Pad (3DS) / D-Pad (DSi)** | Move cursor (adjustable speed in *Settings*; DSi also supports screen-edge scroll) | Navigate menu items |
+| **D-Pad (3DS) / L + D-Pad (DSi)** | Fast camera scroll across the map | Navigate lists & 4×3 build grid |
 | **A (Tap)** | Select unit/building, move, attack, harvest, or place structure | Confirm / Buy item |
 | **A (Double-Tap)** | Select all visible friendly units of the same type on screen | — |
-| **A (Hold + Circle Pad)** | Drag box selection to command a squad | — |
+| **A (Hold + Move)** | Drag box selection to command a squad | — |
 | **B** | Cancel target/placement, clear selection | Back / Resume game |
-| **X / ZL / ZR** | Select all visible friendly units on screen (double-tap `X` to recall camera to squad) | Upgrade structure (in factory menu) |
+| **X (or ZL / ZR on 3DS)** | Select all visible friendly units on screen (double-tap `X` to recall camera to squad) | Upgrade structure (in factory menu) |
 | **Y** | Quick-build / Place ready building / Open Starport / Launch Palace superweapon; Units: **Guard** | Decrease Starport order quantity |
 | **R** | Building: **Repair**; Units: **Retreat** | — |
 | **L + Y** | Building: **Cancel Build**; Units: **Area Guard** | — |
@@ -121,17 +131,19 @@ You need a Nintendo 3DS / 2DS capable of running homebrew (CFW / Luma3DS) and **
 
 ## Building from Source & Testing
 
-Requires **devkitPro** (`devkitARM`, `libctru`, `3dstools`, `bannertool`, `makerom`).
+Requires **devkitPro** (`devkitARM`, `libctru`, `3dstools`, `bannertool`, `makerom` for 3DS; `libnds 2.0`, `calico`, `ndstool` for DSi).
 
 ```bash
 export DEVKITPRO=/path/to/devkitpro
 export DEVKITARM=$DEVKITPRO/devkitARM
 export PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH
 
+# Nintendo 3DS (.3dsx, .cia, .smdh)
 make -f Makefile.3ds -j4
-```
 
-This builds `dune3ds.3dsx`, `dune3ds.cia`, and `dune3ds.smdh` (and copies the latest package into `test builds/`).
+# Nintendo DSi (.nds, TWL mode)
+make -f Makefile.dsi -j4
+```
 
 To run the host regression test suite (7 suites compiled with AddressSanitizer and UndefinedBehaviorSanitizer covering UI composition, MIDI synthesis, speech queue, unit lifecycle/selection, SD/ROMFS paths, native keyboard/saves, and harvester economy):
 
@@ -145,11 +157,11 @@ bash scripts/test_3ds.sh
 
 ## What's Next?
 
-Work on bringing classic Dune II to Nintendo handhelds doesn't stop with the 3DS release:
+Work on bringing classic Dune II to Nintendo handhelds continues:
 
-1. **Nintendo DSi Version (`.nds`)** — The next major milestone is porting Dune II to the **Nintendo DSi / DSi XL**, adapting the dual-screen layout, D-Pad cursor controls, and memory footprint for DSi hardware.
-2. **Gameplay Rebalancing** — Polishing classic Dune II campaign pacing and unit/structure balance so late-game battles feel even sharper and more rewarding.
-3. **More Quality-of-Life Improvements** — Continuing to refine controls, production workflows, and handheld UI conveniences based on real console playtesting.
+1. **Gameplay Rebalancing** — Polishing classic Dune II campaign pacing and unit/structure balance so late-game battles feel even sharper and more rewarding.
+2. **More Quality-of-Life Improvements** — Continuing to refine controls, production workflows, and handheld UI conveniences on both 3DS and DSi based on real console playtesting.
+3. **Further DSi & 3DS Polish** — Continued performance tuning, visual polish, and bug fixes across both handheld ports.
 
 ---
 

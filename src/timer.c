@@ -18,6 +18,10 @@
 	#include <time.h>
 #elif defined(__HAIKU__)
 	#include <OS.h>
+#elif defined(__NDS__)
+	#include <nds.h>
+	#include <calico/system/tick.h>
+	#include <calico/system/thread.h>
 #elif defined(__3DS__)
 	#include <3ds.h>
 #else
@@ -79,6 +83,8 @@ uint32 Timer_GetTime(void)
 	return get_sysvar(_hz_200) * 5;
 #elif defined(__WATCOMC__)
 	return clock() * 1000 / CLOCKS_PER_SEC;
+#elif defined(__NDS__)
+	return (uint32)((tickGetCount() * 1000ULL) / (u64)TICK_FREQ);
 #elif defined(__3DS__)
 	return (uint32)((svcGetSystemTick() * 1000ULL) / SYSCLOCK_ARM11);
 #else
@@ -103,7 +109,20 @@ static bool Timer_InterruptRun(int arg)
 	if (timerLock) return false;
 	timerLock = true;
 
-#if defined(__3DS__)
+#if defined(__NDS__)
+	static u64 s_timerLastTickNDS = 0;
+	static u64 s_timerRemNDS = 0;
+	u64 nowTick = tickGetCount();
+	if (s_timerLastTickNDS == 0) s_timerLastTickNDS = nowTick;
+	u64 tickDelta = nowTick - s_timerLastTickNDS;
+	s_timerLastTickNDS = nowTick;
+	u64 numer = tickDelta * 1000000ULL + s_timerRemNDS;
+	usec_delta = (uint32)(numer / (u64)TICK_FREQ);
+	s_timerRemNDS = numer % (u64)TICK_FREQ;
+	if (usec_delta > 50000) usec_delta = 50000;
+	new_time = (uint32)((nowTick * 1000ULL) / (u64)TICK_FREQ);
+	s_timerLastTime = new_time;
+#elif defined(__3DS__)
 	static u64 s_timerLastTick3DS = 0;
 	static u64 s_timerRem3DS = 0;
 	u64 nowTick = svcGetSystemTick();
@@ -186,6 +205,46 @@ void SleepAndProcessBackgroundTasks(void)
 	} while (system_time() - s_nextTrigger > 0);
 }
 
+#elif defined(__NDS__)
+extern void midi_3ds_pump(void);
+
+static void NDS_SleepUsec(uint32 usec)
+{
+	if (usec >= 16000) {
+		swiWaitForVBlank();
+		return;
+	}
+	u64 target = tickGetCount() + ((u64)usec * (u64)TICK_FREQ) / 1000000ULL;
+	while (tickGetCount() < target) {
+		threadYield();
+	}
+}
+
+void SleepAndProcessBackgroundTasks(void)
+{
+	if (s_timerNodeCount == 0) {
+		midi_3ds_pump();
+		NDS_SleepUsec(1000);
+		return;
+	}
+	while (!Timer_InterruptRun(0)) {
+		midi_3ds_pump();
+		uint32 min_left = 0xFFFFFFFF;
+		for (int i = 0; i < s_timerNodeCount; i++) {
+			if (s_timerNodes[i].usec_delay == 0) {
+				min_left = 0;
+				break;
+			}
+			if (s_timerNodes[i].usec_left < min_left) {
+				min_left = s_timerNodes[i].usec_left;
+			}
+		}
+		if (min_left == 0 || min_left == 0xFFFFFFFF) break;
+		if (min_left > 16667) min_left = 16667;
+		NDS_SleepUsec(min_left);
+	}
+	midi_3ds_pump();
+}
 #elif defined(__3DS__)
 extern void midi_3ds_pump(void);
 
@@ -333,6 +392,9 @@ void Timer_Init(void)
 	Xbtimer(0/* Timer A */, 1/* divider = 4 */, s_timerSpeed * 6144 / 10000, Timer_Handler);
 #endif
 #elif defined(DOS) || defined(__HAIKU__) || defined(__3DS__)
+#ifdef __NDS__
+	tickInit();
+#endif
 	/* Handled via vblank in SleepAndProcessBackgroundTasks */
 #else
 	{

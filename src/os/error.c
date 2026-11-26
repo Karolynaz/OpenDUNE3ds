@@ -42,7 +42,7 @@ void Warning(const char *format, ...) {
 	va_end(ap);
 }
 
-#ifdef __3DS__
+#if defined(__3DS__) && !defined(__NDS__)
 #include <3ds.h>
 #endif
 
@@ -53,7 +53,9 @@ void TraceLog(const char *format, ...) {
 	vsnprintf(buffer, sizeof(buffer), format, ap);
 	va_end(ap);
 
-#ifdef __3DS__
+#if defined(__NDS__)
+	fprintf(stderr, "%s\n", buffer);
+#elif defined(__3DS__)
 	svcOutputDebugString(buffer, strlen(buffer));
 	FILE *f = fopen("sdmc:/3ds/dune3ds/trace.log", "a");
 	if (f) {

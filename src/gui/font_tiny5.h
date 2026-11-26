@@ -184,18 +184,19 @@ static inline int Tiny5_TextWidth(const char *text)
 
 static inline void Tiny5_Plot2x(uint8_t *buf, int stride, int px, int py, bool shadowPass, uint8_t color)
 {
+    int maxH = (stride == 256) ? 192 : 240;
     if (shadowPass) {
         for (int oy = 1; oy <= 2; oy++) {
             for (int ox = 1; ox <= 2; ox++) {
                 int sx = px + ox, sy = py + oy;
-                if (sx >= 0 && sx < stride && sy >= 0 && sy < 240) buf[sy * stride + sx] = TC_BLACK;
+                if (sx >= 0 && sx < stride && sy >= 0 && sy < maxH) buf[sy * stride + sx] = TC_BLACK;
             }
         }
     } else {
         for (int dy = 0; dy < 2; dy++) {
             for (int dx = 0; dx < 2; dx++) {
                 int fx = px + dx, fy = py + dy;
-                if (fx >= 0 && fx < stride && fy >= 0 && fy < 240) buf[fy * stride + fx] = color;
+                if (fx >= 0 && fx < stride && fy >= 0 && fy < maxH) buf[fy * stride + fx] = color;
             }
         }
     }

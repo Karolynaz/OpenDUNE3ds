@@ -8,8 +8,13 @@
 #include "unit.h"
 #include "structure.h"
 
+#ifdef __NDS__
+#define TOP_WIDTH 256
+#define TOP_HEIGHT 192
+#else
 #define TOP_WIDTH 400
 #define TOP_HEIGHT 240
+#endif
 #define BOTTOM_WIDTH 320
 #define BOTTOM_HEIGHT 240
 

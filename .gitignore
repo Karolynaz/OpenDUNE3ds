@@ -32,7 +32,11 @@ tools/amigaMXextract
 tools/extractpak
 .*.swp
 build/
+build_dsi/
+test builds/
+scripts/__pycache__/
 *.3dsx
 *.cia
 *.smdh
+*.nds
 CHOAM_*.png

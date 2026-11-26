@@ -42,11 +42,11 @@
 
 uint8 *g_topScreenBuffer = NULL;
 uint8 *g_bottomScreenBuffer = NULL;
-uint8 g_topScreenUIMask[TOP_WIDTH * TOP_HEIGHT];
-uint8 g_bottomScreenUIMask[BOTTOM_WIDTH * BOTTOM_HEIGHT];
+uint8 g_topScreenUIMask[TOP_WIDTH * TOP_HEIGHT] __attribute__((aligned(4)));
+uint8 g_bottomScreenUIMask[BOTTOM_WIDTH * BOTTOM_HEIGHT] __attribute__((aligned(4)));
 
-int16 g_cursor3DS_X = 200;
-int16 g_cursor3DS_Y = 120;
+int16 g_cursor3DS_X = TOP_WIDTH / 2;
+int16 g_cursor3DS_Y = TOP_HEIGHT / 2;
 
 bool g_3dsModalMessageActive = false;
 static int s_dialogFocus = 0;
@@ -335,19 +335,21 @@ void GUI_3DS_Uninit(void)
 
 void GUI_3DS_PutPixel(uint8 *buf, int16 stride, int16 x, int16 y, uint8 color)
 {
-	if (x >= 0 && x < stride && y >= 0 && y < 240) {
+	int maxH = (stride == TOP_WIDTH) ? TOP_HEIGHT : BOTTOM_HEIGHT;
+	if (x >= 0 && x < stride && y >= 0 && y < maxH) {
 		buf[y * stride + x] = color;
 	}
 }
 
 void GUI_3DS_FillRect(uint8 *buf, int16 stride, int16 x1, int16 y1, int16 x2, int16 y2, uint8 color)
 {
+	int maxH = (stride == TOP_WIDTH) ? TOP_HEIGHT : BOTTOM_HEIGHT;
 	if (x1 > x2) { int16 t = x1; x1 = x2; x2 = t; }
 	if (y1 > y2) { int16 t = y1; y1 = y2; y2 = t; }
 	if (x1 < 0) x1 = 0;
 	if (x2 >= stride) x2 = stride - 1;
 	if (y1 < 0) y1 = 0;
-	if (y2 >= 240) y2 = 239;
+	if (y2 >= maxH) y2 = (int16)(maxH - 1);
 	if (x1 > x2 || y1 > y2) return;
 
 	for (int16 y = y1; y <= y2; y++) {
@@ -513,9 +515,9 @@ uint16 GUI_3DS_ScreenPosToTile(int16 screenX, int16 screenY)
 	if (screenY < 0) screenY = 0;
 	if (screenY >= TOP_HEIGHT) screenY = TOP_HEIGHT - 1;
 
-	/* Convert 400x240 screen coords to 240x160 viewport coords */
-	int16 vx = (screenX * 3) / 5;
-	int16 vy = (screenY * 2) / 3;
+	/* Convert TOP_WIDTH x TOP_HEIGHT screen coords to 240x160 viewport coords */
+	int16 vx = (screenX * 240) / TOP_WIDTH;
+	int16 vy = (screenY * 160) / TOP_HEIGHT;
 
 	uint16 camX = Tile_GetPackedX(g_viewportPosition);
 	uint16 camY = Tile_GetPackedY(g_viewportPosition);
@@ -534,8 +536,8 @@ bool GUI_3DS_MapPosToScreenPos(tile32 mapPos, int16 *outX, int16 *outY)
 	uint16 vx = 0, vy = 0;
 	bool inViewport = Map_IsPositionInViewport(mapPos, &vx, &vy);
 
-	int16 sx = ((int16)vx * 5) / 3;
-	int16 sy = ((int16)vy * 3) / 2;
+	int16 sx = ((int16)vx * TOP_WIDTH) / 240;
+	int16 sy = ((int16)vy * TOP_HEIGHT) / 160;
 
 	if (outX != NULL) *outX = sx;
 	if (outY != NULL) *outY = sy;
@@ -568,9 +570,10 @@ static const uint8 s_cursorArrow[18][11] = {
 static void GUI_3DS_DrawCursor(uint8 *buf, int16 stride, int16 x, int16 y)
 {
 	uint8 *mask = (stride == TOP_WIDTH) ? g_topScreenUIMask : g_bottomScreenUIMask;
+	int maxH = (stride == TOP_WIDTH) ? TOP_HEIGHT : BOTTOM_HEIGHT;
 	for (int r = 0; r < 18; r++) {
 		int py = y + r;
-		if (py < 0 || py >= 240) continue;
+		if (py < 0 || py >= maxH) continue;
 		for (int c = 0; c < 11; c++) {
 			uint8 pixel = s_cursorArrow[r][c];
 			if (pixel != 255) {
@@ -624,6 +627,7 @@ static bool CursorOverEnemy(int16 cx, int16 cy)
 static void GUI_3DS_DrawTargetCursor(uint8 *buf, int16 stride, int16 x, int16 y, uint8 ringColor)
 {
 	uint8 *mask = (stride == TOP_WIDTH) ? g_topScreenUIMask : g_bottomScreenUIMask;
+	int maxH = (stride == TOP_WIDTH) ? TOP_HEIGHT : BOTTOM_HEIGHT;
 	int16 ox = x - 7;
 	int16 oy = y - 7;
 	for (int pass = 0; pass < 2; pass++) {
@@ -631,7 +635,7 @@ static void GUI_3DS_DrawTargetCursor(uint8 *buf, int16 stride, int16 x, int16 y,
 		uint8 color = (pass == 0) ? 0 : ringColor;
 		for (int r = 0; r < 15; r++) {
 			int py = oy + r + off;
-			if (py < 0 || py >= 240) continue;
+			if (py < 0 || py >= maxH) continue;
 			for (int c = 0; c < 15; c++) {
 				if (!s_cursorTarget[r][c]) continue;
 				int px = ox + c + off;
@@ -678,13 +682,14 @@ static const uint8 s_cursorScrollDiag[11][11] = {
 static void GUI_3DS_DrawScrollCursor(uint8 *buf, int16 stride, int16 x, int16 y, int dx, int dy)
 {
 	uint8 *mask = (stride == TOP_WIDTH) ? g_topScreenUIMask : g_bottomScreenUIMask;
+	int maxH = (stride == TOP_WIDTH) ? TOP_HEIGHT : BOTTOM_HEIGHT;
 	if (dx != 0 && dy != 0) {
 		int baseX = (dx < 0) ? max(1, (int)x) : min(stride - 12, (int)x - 10);
-		int baseY = (dy < 0) ? max(1, (int)y) : min(240 - 12, (int)y - 10);
+		int baseY = (dy < 0) ? max(1, (int)y) : min(maxH - 12, (int)y - 10);
 		for (int r = 0; r < 11; r++) {
 			int sr = (dy < 0) ? r : (10 - r);
 			int py = baseY + r;
-			if (py < 0 || py >= 240) continue;
+			if (py < 0 || py >= maxH) continue;
 			for (int c = 0; c < 11; c++) {
 				int sc = (dx < 0) ? c : (10 - c);
 				uint8 px = s_cursorScrollDiag[sr][sc];
@@ -702,11 +707,11 @@ static void GUI_3DS_DrawScrollCursor(uint8 *buf, int16 stride, int16 x, int16 y,
 
 	if (dy != 0) {
 		int baseX = clamp((int)x - 5, 1, stride - 12);
-		int baseY = (dy < 0) ? max(1, (int)y) : min(240 - 13, (int)y - 11);
+		int baseY = (dy < 0) ? max(1, (int)y) : min(maxH - 13, (int)y - 11);
 		for (int r = 0; r < 12; r++) {
 			int sr = (dy < 0) ? r : (11 - r);
 			int py = baseY + r;
-			if (py < 0 || py >= 240) continue;
+			if (py < 0 || py >= maxH) continue;
 			for (int c = 0; c < 11; c++) {
 				uint8 px = s_cursorScrollUp[sr][c];
 				if (px != 255) {
@@ -720,10 +725,10 @@ static void GUI_3DS_DrawScrollCursor(uint8 *buf, int16 stride, int16 x, int16 y,
 		}
 	} else if (dx != 0) {
 		int baseX = (dx < 0) ? max(1, (int)x) : min(stride - 13, (int)x - 11);
-		int baseY = clamp((int)y - 5, 1, 240 - 12);
+		int baseY = clamp((int)y - 5, 1, maxH - 12);
 		for (int r = 0; r < 11; r++) {
 			int py = baseY + r;
-			if (py < 0 || py >= 240) continue;
+			if (py < 0 || py >= maxH) continue;
 			for (int c = 0; c < 12; c++) {
 				int sc = (dx < 0) ? c : (11 - c);
 				uint8 px = s_cursorScrollUp[sc][r];
@@ -1046,6 +1051,7 @@ static int GUI_3DS_DrawIntroFontText(uint8 *buf, int stride, int x, int y, const
 		return x + (str ? (int)strlen(str) * 8 : 0);
 	}
 	uint8 *mask = (stride == TOP_WIDTH) ? g_topScreenUIMask : g_bottomScreenUIMask;
+	int maxH = (stride == TOP_WIDTH) ? TOP_HEIGHT : BOTTOM_HEIGHT;
 	int curX = x;
 	const char *p = str;
 	while (*p != '\0') {
@@ -1056,7 +1062,7 @@ static int GUI_3DS_DrawIntroFontText(uint8 *buf, int stride, int x, int y, const
 		if (fc->data != NULL && fc->width > 0) {
 			for (uint8 row = 0; row < fc->usedLines; row++) {
 				int py = y + (int)fc->unusedLines + (int)row;
-				if (py < 0 || py >= 240) continue;
+				if (py < 0 || py >= maxH) continue;
 				const uint8 *srcLine = fc->data + row * fc->width;
 				for (uint8 col = 0; col < fc->width; col++) {
 					uint8 px = srcLine[col];
@@ -1075,13 +1081,13 @@ static int GUI_3DS_DrawIntroFontText(uint8 *buf, int stride, int x, int y, const
 				if (dia == FONT_DIA_DOT && topY >= 0) {
 					for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
 						int pxX = midX + dx, py = topY + dy;
-						if (pxX >= 0 && pxX < stride && py >= 0 && py < 240) { buf[py * stride + pxX] = mainColor; mask[py * stride + pxX] = maskVal; }
+						if (pxX >= 0 && pxX < stride && py >= 0 && py < maxH) { buf[py * stride + pxX] = mainColor; mask[py * stride + pxX] = maskVal; }
 					}
 				} else if (dia == FONT_DIA_CARON && topY >= 1) {
 					int pts[3][2] = {{-2, -1}, {0, 0}, {2, -1}};
 					for (int k = 0; k < 3; k++) {
 						int pxX = midX + pts[k][0], py = topY + pts[k][1];
-						if (pxX >= 0 && pxX < stride && py >= 0 && py < 240) { buf[py * stride + pxX] = mainColor; mask[py * stride + pxX] = maskVal; }
+						if (pxX >= 0 && pxX < stride && py >= 0 && py < maxH) { buf[py * stride + pxX] = mainColor; mask[py * stride + pxX] = maskVal; }
 					}
 				}
 			}
@@ -1479,7 +1485,7 @@ static void ShopTileIcon(int x, int y, uint16 spriteID)
 
 	const uint8 *pix = NULL;
 	int pixStride = w;
-	uint8 saved[64 * 64];
+	static uint8 saved[64 * 64];
 	uint8 *scratch = NULL;
 	ShopIconCacheEntry *entry = &s_shopIconCache[spriteID & 15];
 	if (w <= 32 && h <= 24 && entry->sprite == sprite && entry->spriteID == spriteID && entry->w == w && entry->h == h) {
@@ -1695,7 +1701,11 @@ static void FactoryPlaqueText(int baseline, const char *str, uint8 color)
 {
 	if (!str || !*str) return;
 	char buf[128];
+#ifdef __NDS__
+	const int capacity = 22;
+#else
 	const int capacity = 27; /* fits within 222px (27 * 8 = 216px) inside 230px plaque */
+#endif
 	int glyphs = Cairo_Width4(str, (int)strlen(str)) / 32;
 	const char *p = str;
 	const char *end = str + strlen(str);
@@ -1707,11 +1717,83 @@ static void FactoryPlaqueText(int baseline, const char *str, uint8 color)
 	memcpy(buf, str, bytes);
 	buf[bytes] = '\0';
 	if (shorten) memcpy(buf + bytes, "...", 4);
+#ifdef __NDS__
+	Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, TOP_WIDTH / 2, baseline, buf, color, 0);
+#else
 	Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, 201, baseline, buf, color, 0);
+#endif
 }
 
 static void FactoryTop(void)
 {
+#ifdef __NDS__
+	/* Scale central 320x240 region of s_shopTopBG (x=40..359) 5->4 onto 256x192 */
+	for (int y = 0; y < TOP_HEIGHT; y++) {
+		int sy = (y * 240) / TOP_HEIGHT;
+		const uint8 *sRow = s_shopTopBG + sy * 400 + 40;
+		uint8 *dRow = g_topScreenBuffer + y * TOP_WIDTH;
+		for (int x = 0; x < TOP_WIDTH; x++) {
+			dRow[x] = sRow[(x * 320) / TOP_WIDTH];
+		}
+	}
+	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
+
+	char credits[7];
+	snprintf(credits, sizeof(credits), "%6u", g_playerHouse ? (unsigned)g_playerHouse->credits : 0u);
+	for (int i = 0; i < 6; i++) {
+		if (credits[i] == ' ') continue;
+		const char digit[] = { credits[i], '\0' };
+		int dx = ((247 - 40 + 12 * i) * TOP_WIDTH) / 320;
+		int dy = (12 * TOP_HEIGHT) / 240;
+		GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, dx, dy, digit, 97);
+	}
+
+	int chosen = (s_factoryFocus < g_factoryWindowTotal) ? s_factoryFocus : (g_factoryWindowBase + g_factoryWindowSelected);
+	FactoryWindowItem *item = (chosen >= 0 && chosen < g_factoryWindowTotal) ? &g_factoryWindowItems[chosen] : NULL;
+	if (!item || !item->objectInfo) return;
+
+	/* Scale 184x112 WSA preview cleanly into 148x90 centered in the scaled frame */
+	const int dstW = 148, dstH = 90;
+	const int wsaX = (TOP_WIDTH - dstW) / 2;
+	const int wsaY = 41;
+	const uint8 *srcBase = s_factoryPreviewValid ? s_factoryPreview : GFX_Screen_Get_ByIndex(SCREEN_1);
+	if (srcBase != NULL) {
+		for (int y = 0; y < dstH; y++) {
+			int sy = (y * 112) / dstH;
+			const uint8 *sRow = s_factoryPreviewValid ? (srcBase + sy * 184) : (srcBase + (48 + sy) * 320 + 128);
+			uint8 *dRow = g_topScreenBuffer + (wsaY + y) * TOP_WIDTH + wsaX;
+			uint8 *mRow = g_topScreenUIMask + (wsaY + y) * TOP_WIDTH + wsaX;
+			for (int x = 0; x < dstW; x++) {
+				dRow[x] = sRow[(x * 184) / dstW];
+				mRow[x] = 0;
+			}
+		}
+	}
+
+	const char *name = String_Get_ByIndex(item->objectInfo->stringID_full);
+	char line1[64];
+	if (item->objectInfo->available < 0) {
+		snprintf(line1, sizeof(line1), "%s (%s)", name ? name : "", L10N("UPGRADE", "TOBULINTI"));
+	} else {
+		snprintf(line1, sizeof(line1), "%s - %u", name ? name : "", item->credits);
+	}
+	FactoryPlaqueText(167, line1, 15);
+
+	char line2[64];
+	line2[0] = '\0';
+	if (g_factoryWindowConstructionYard) {
+		if (item->objectType < STRUCTURE_MAX) {
+			const StructureInfo *si = &g_table_structureInfo[item->objectType];
+			snprintf(line2, sizeof(line2), L10N("Armor: %u  Power: %+d", "Šarvai: %u  Energija: %+d"),
+				si->o.hitpoints, -si->powerUsage);
+		}
+	} else if (item->objectType < UNIT_MAX) {
+		const UnitInfo *ui = &g_table_unitInfo[item->objectType];
+		snprintf(line2, sizeof(line2), L10N("HP: %u  Pow: %u  Spd: %u", "HP: %u  Galia: %u  Grt: %u"),
+			ui->o.hitpoints, ui->damage, ui->movingSpeedFactor);
+	}
+	FactoryPlaqueText(181, line2, 117);
+#else
 	memcpy(g_topScreenBuffer, s_shopTopBG, 400 * 240);
 	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
 
@@ -1770,6 +1852,7 @@ static void FactoryTop(void)
 			ui->o.hitpoints, ui->damage, ui->movingSpeedFactor);
 	}
 	FactoryPlaqueText(223, line2, 117);
+#endif
 }
 
 /* The original 304x120 region hit map starts at (8, 24) on SCREEN_0. */
@@ -2038,10 +2121,11 @@ static void GUI_3DS_DrawPopup(const char *text, uint16 spriteID)
 
 	/* 4. Building / Object picture box */
 	bool hasPortrait = Sprite_GetByIndex(spriteID) != NULL;
+	int by = iy0 + 10; /* 51 on 3DS */
+	int bh = 48;
 	if (hasPortrait) {
-		int bw = 64, bh = 48;
-		int bx = (TOP_WIDTH - bw) / 2; /* 168 */
-		int by = 51;
+		int bw = 64;
+		int bx = (TOP_WIDTH - bw) / 2; /* 168 on 3DS */
 
 		/* 1px white border around the picture box */
 		for (int x = bx - 1; x <= bx + bw; x++) {
@@ -2058,7 +2142,7 @@ static void GUI_3DS_DrawPopup(const char *text, uint16 spriteID)
 
 	/* Reserve the bevel and shadow when measuring, and keep text below the portrait. */
 	enum { PADDING = 5, SHADOW = 1 };
-	const int textTop = hasPortrait ? 105 : iy0 + 2 + PADDING;
+	const int textTop = hasPortrait ? (by + bh + 6) : iy0 + 2 + PADDING;
 	const int textWidth = ix1 - ix0 + 1 - 2 * (2 + PADDING) - SHADOW;
 	const int textBottom = iy1 - 1 - PADDING;
 	const int textHeight = textBottom - textTop;
@@ -2107,10 +2191,11 @@ static void GUI_3DS_DrawPopup(const char *text, uint16 spriteID)
 
 static void DrawMarkerRect(uint8 *buf, uint8 *mask, int stride, int x1, int y1, int x2, int y2, uint8 color)
 {
+	int maxH = (stride == TOP_WIDTH) ? TOP_HEIGHT : BOTTOM_HEIGHT;
 	x1 = max(0, x1);
 	x2 = min(stride - 1, x2);
 	y1 = max(0, y1);
-	y2 = min(TOP_HEIGHT - 1, y2);
+	y2 = min(maxH - 1, y2);
 	if (x1 > x2 || y1 > y2) return;
 	for (int y = y1; y <= y2; y++) {
 		memset(buf + y * stride + x1, color, x2 - x1 + 1);
@@ -2134,10 +2219,16 @@ static void DrawSelectionCorners(uint8 *buf, uint8 *mask, int stride,
 static void DrawUnitMarker(const Unit *unit, int x, int y)
 {
 	const UnitInfo *info = &g_table_unitInfo[unit->o.type];
+#ifdef __NDS__
+	int radius = info->movementType == MOVEMENT_FOOT ? 7 : 10;
+	int arm = 3;
+#else
 	int radius = info->movementType == MOVEMENT_FOOT ? 9 : 13;
+	int arm = 4;
+#endif
 	int left = x - radius, right = x + radius;
 	int top = y - radius, bottom = y + radius;
-	DrawSelectionCorners(g_topScreenBuffer, g_topScreenUIMask, TOP_WIDTH, left, top, right, bottom, 4);
+	DrawSelectionCorners(g_topScreenBuffer, g_topScreenUIMask, TOP_WIDTH, left, top, right, bottom, arm);
 	if (unit->o.houseID != g_playerHouseID) return;
 	int maxHP = info->o.hitpoints;
 	int hp = min(unit->o.hitpoints, maxHP);
@@ -2146,6 +2237,44 @@ static void DrawUnitMarker(const Unit *unit, int x, int y)
 	uint8 color = hp <= maxHP / 4 ? TC_RED : hp <= maxHP / 2 ? TC_YELLOW : TC_GREEN;
 	DrawMarkerRect(g_topScreenBuffer, g_topScreenUIMask, TOP_WIDTH, left, top - 6, right, top - 2, TC_BLACK);
 	if (fill > 0) DrawMarkerRect(g_topScreenBuffer, g_topScreenUIMask, TOP_WIDTH, left + 1, top - 5, left + fill, top - 3, color);
+}
+
+static void BlitDOS320x200ToTop(const uint8 *src, bool transparentZero)
+{
+	if (src == NULL) return;
+#ifdef __NDS__
+	/* Exact 5:4 scale: 320x200 -> 256x160 centered vertically at y=16..175 */
+	const int offsetY = (TOP_HEIGHT - 160) / 2; /* 16 */
+	for (int y = 0; y < 160; y++) {
+		int sy = (y * 5) / 4;
+		const uint8 *sRow = src + sy * SCREEN_WIDTH;
+		uint8 *dRow = g_topScreenBuffer + (offsetY + y) * TOP_WIDTH;
+		if (!transparentZero) {
+			for (int x = 0; x < TOP_WIDTH; x++) dRow[x] = sRow[(x * 5) / 4];
+		} else {
+			for (int x = 0; x < TOP_WIDTH; x++) {
+				uint8 px = sRow[(x * 5) / 4];
+				if (px != 0) dRow[x] = px;
+			}
+		}
+	}
+#else
+	int offsetX = (TOP_WIDTH - SCREEN_WIDTH) / 2;   /* 40 */
+	int offsetY = (TOP_HEIGHT - SCREEN_HEIGHT) / 2; /* 20 */
+	if (!transparentZero) {
+		for (int y = 0; y < SCREEN_HEIGHT; y++) {
+			memcpy(g_topScreenBuffer + ((offsetY + y) * TOP_WIDTH + offsetX), src + y * SCREEN_WIDTH, SCREEN_WIDTH);
+		}
+	} else {
+		for (int y = 0; y < SCREEN_HEIGHT; y++) {
+			const uint8 *sRow = src + y * SCREEN_WIDTH;
+			uint8 *dRow = g_topScreenBuffer + (offsetY + y) * TOP_WIDTH + offsetX;
+			for (int x = 0; x < SCREEN_WIDTH; x++) {
+				if (sRow[x] != 0) dRow[x] = sRow[x];
+			}
+		}
+	}
+#endif
 }
 
 void GUI_3DS_RenderTopScreen(void)
@@ -2159,71 +2288,62 @@ void GUI_3DS_RenderTopScreen(void)
   return;
  }
  if(s_resultsActive && !CustomDialog()) {
-  memset(g_topScreenBuffer,0,400*240); memset(g_topScreenUIMask,0,sizeof(g_topScreenUIMask));
-  const uint8 *screen=GFX_Screen_Get_ByIndex(SCREEN_0);
-  if(screen) for(int y=0;y<200;y++) memcpy(g_topScreenBuffer+(y+20)*400+40,screen+y*320,320);
+  memset(g_topScreenBuffer,0,TOP_WIDTH*TOP_HEIGHT); memset(g_topScreenUIMask,0,sizeof(g_topScreenUIMask));
+  BlitDOS320x200ToTop(GFX_Screen_Get_ByIndex(SCREEN_0), false);
   return;
  }
 	memset(g_topScreenUIMask, 0, sizeof(g_topScreenUIMask));
 
 	uint8 *src = GFX_Screen_Get_ByIndex(SCREEN_0);
 
-	/* 0. House Selection Screen: Large Crest on Left, Ornate House Name + Description on Right */
+	/* 0. House Selection Screen: Centered Ornate House Name + Description (no crest on top screen) */
 	if (g_3dsHousePickerActive) {
 		memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
 		memset(g_topScreenUIMask, 2, sizeof(g_topScreenUIMask));
 
+		/* Still cache crests from SCREEN_1 so the Save/Load screen can preview them later. */
 		uint8 *herald = GFX_Screen_Get_ByIndex(SCREEN_1);
 		if (herald == NULL) herald = src;
 		if (herald != NULL) GUI_3DS_CacheHeraldCrests(herald);
 		int focus = clamp(s_houseFocus, 0, 2);
 
-		/* Extract focused House crest square (84x64 at srcX = 18 + focus*96, srcY = 54) and scale 2x (168x128) */
-		if (herald != NULL) {
-			int srcBaseX = 18 + focus * 96;
-			int srcBaseY = 54;
-			int crestW = 84;
-			int crestH = 64; /* 64 rows excludes the hanging loops / feet */
-			int dstBaseX = 14;
-			int dstBaseY = (TOP_HEIGHT - crestH * 2) / 2; /* 56 */
-			for (int cy = 0; cy < crestH; cy++) {
-				const uint8 *srcRow = herald + (srcBaseY + cy) * SCREEN_WIDTH + srcBaseX;
-				for (int cx = 0; cx < crestW; cx++) {
-					uint8 px = srcRow[cx];
-					int dx = dstBaseX + cx * 2;
-					int dy = dstBaseY + cy * 2;
-					g_topScreenBuffer[dy * TOP_WIDTH + dx] = px;
-					g_topScreenBuffer[dy * TOP_WIDTH + dx + 1] = px;
-					g_topScreenBuffer[(dy + 1) * TOP_WIDTH + dx] = px;
-					g_topScreenBuffer[(dy + 1) * TOP_WIDTH + dx + 1] = px;
-					g_topScreenUIMask[dy * TOP_WIDTH + dx] = 0;
-					g_topScreenUIMask[dy * TOP_WIDTH + dx + 1] = 0;
-					g_topScreenUIMask[(dy + 1) * TOP_WIDTH + dx] = 0;
-					g_topScreenUIMask[(dy + 1) * TOP_WIDTH + dx + 1] = 0;
-				}
-			}
-			/* Solid black rectangle beneath the crest to guarantee no feet or artifacts show */
-			int bottomCoverY = dstBaseY + crestH * 2 - 2;
-			if (bottomCoverY < TOP_HEIGHT) {
-				memset(g_topScreenBuffer + bottomCoverY * TOP_WIDTH, 0, (TOP_HEIGHT - bottomCoverY) * TOP_WIDTH);
-			}
-		}
-
-		/* Right Side: House Name in Ornate INTRO.FNT font + House Description */
 		static const char *houseNames[3] = {"Atreides", "Ordos", "Harkonnen"};
 		static const char *houseDescEN[3] = {
-			"The noble House of\nCaladan.\n\nMasters of air power\nwith Ornithopters,\nSonic Tanks, and\nelite Fremen warriors.",
-			"The wealthy cartel of\nSigma Draconis.\n\nFields fast Raider\ntrikes, Saboteurs, and\nDeviator gas tanks that\nmind-control enemies.",
-			"The brutal House of\nGiedi Prime.\n\nCommands crushing\nheavy armor, Devastator\ntanks, and apocalyptic\nDeath Hand missiles."
+			"The noble House of Caladan.\n\nMasters of air power with Ornithopters, Sonic Tanks, and elite Fremen warriors.",
+			"The wealthy cartel of Sigma Draconis.\n\nFields fast Raider trikes, Saboteurs, and Deviator gas tanks that mind-control enemies.",
+			"The brutal House of Giedi Prime.\n\nCommands crushing heavy armor, Devastator tanks, and apocalyptic Death Hand missiles."
 		};
 		static const char *houseDescLT[3] = {
-			"Kilminga Kaladano\ngiminė.\n\nStipri aviacija\n(Ornitopteriai), garso\ntankai ir narsūs\nFremenų kariai.",
-			"Turtingas Sigma\nDraconis kartelis.\n\nGreiti triračiai,\nsabotažistai ir\nNukreipėjai, perimantys\npriešo techniką.",
-			"Žiauri Giedi Prime\ngiminė.\n\nSunkiai šarvuota\ntechnika, Niokotojai\nir atominės Mirties\nRankos raketos."
+			"Kilminga Kaladano giminė.\n\nStipri aviacija (Ornitopteriai), garso tankai ir narsūs Fremenų kariai.",
+			"Turtingas Sigma Draconis kartelis.\n\nGreiti triračiai, sabotažistai ir Nukreipėjai, perimantys priešo techniką.",
+			"Žiauri Giedi Prime giminė.\n\nSunkiai šarvuota technika, Niokotojai ir atominės Mirties Rankos raketos."
 		};
 
-		GUI_3DS_DrawIntroFontText(g_topScreenBuffer, TOP_WIDTH, 198, 74, houseNames[focus], 119, 112);
-		GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 198, 100, L10N(houseDescEN[focus], houseDescLT[focus]), 15);
+		static char lines[10][128];
+		const char *next = NULL;
+		int maxW = min(TOP_WIDTH - 28, 304);
+		int numLines = Cairo_WrapText(L10N(houseDescEN[focus], houseDescLT[focus]), maxW, lines, 10, &next);
+
+		int descH = 0;
+		for (int i = 0; i < numLines; i++) {
+			descH += (lines[i][0] == '\0') ? 8 : CAIRO_LINE_H;
+		}
+		int titleH = 20;
+		int gap = 14;
+		int startY = max(12, (TOP_HEIGHT - (titleH + gap + descH)) / 2);
+
+		GUI_3DS_DrawTitleTextTopCentered(startY, houseNames[focus], 119, 112);
+
+		int curY = startY + titleH + gap;
+		for (int i = 0; i < numLines; i++) {
+			if (lines[i][0] == '\0') {
+				curY += 8;
+			} else {
+				Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, TOP_WIDTH / 2,
+					curY + CAIRO_BASE_ROW, lines[i], 15, CAIRO_NO_SHADOW);
+				curY += CAIRO_LINE_H;
+			}
+		}
 		return;
 	}
 
@@ -2231,14 +2351,14 @@ void GUI_3DS_RenderTopScreen(void)
 	if (GUI_3DS_IsCutsceneOrBriefing() && !g_3dsHousePickerActive) {
 		memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
 		if (src != NULL) {
-			int offsetX = (TOP_WIDTH - SCREEN_WIDTH) / 2;   /* 40 */
-			int offsetY = (TOP_HEIGHT - SCREEN_HEIGHT) / 2; /* 20 */
-			for (int y = 0; y < SCREEN_HEIGHT; y++) {
-				memcpy(g_topScreenBuffer + ((offsetY + y) * TOP_WIDTH + offsetX), src + y * SCREEN_WIDTH, SCREEN_WIDTH);
-			}
+			BlitDOS320x200ToTop(src, false);
 			if (g_3dsMentatHelpActive && s_mentatButtons == NULL) {
 				/* Help subject list lives on the bottom screen: keep the top screen to the Mentat only. */
-				GUI_3DS_FillRect(g_topScreenBuffer, TOP_WIDTH, offsetX + 115, 0, TOP_WIDTH - 1, TOP_HEIGHT - 1, 0);
+#ifdef __NDS__
+				GUI_3DS_FillRect(g_topScreenBuffer, TOP_WIDTH, (115 * TOP_WIDTH) / SCREEN_WIDTH, 0, TOP_WIDTH - 1, TOP_HEIGHT - 1, 0);
+#else
+				GUI_3DS_FillRect(g_topScreenBuffer, TOP_WIDTH, (TOP_WIDTH - SCREEN_WIDTH) / 2 + 115, 0, TOP_WIDTH - 1, TOP_HEIGHT - 1, 0);
+#endif
 			}
 		}
 		return;
@@ -2247,28 +2367,10 @@ void GUI_3DS_RenderTopScreen(void)
 	/* 2. Title Screen: show planet background with Dune 2 title artwork overlaid on top screen */
 	if (GUI_3DS_IsTitleMenu()) {
 		memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
-		int offsetX = (TOP_WIDTH - SCREEN_WIDTH) / 2;   /* 40 */
-		int offsetY = (TOP_HEIGHT - SCREEN_HEIGHT) / 2; /* 20 */
-		if (s_planetBgValid) {
-			for (int y = 0; y < SCREEN_HEIGHT; y++) {
-				const uint8 *pRow = s_planetBg + y * SCREEN_WIDTH;
-				uint8 *dstRow = g_topScreenBuffer + (offsetY + y) * TOP_WIDTH + offsetX;
-				for (int x = 0; x < SCREEN_WIDTH; x++) {
-					if (pRow[x] != 0) dstRow[x] = pRow[x];
-				}
-			}
-		}
+		if (s_planetBgValid) BlitDOS320x200ToTop(s_planetBg, true);
 		uint8 *art = GFX_Screen_Get_ByIndex(SCREEN_1);
 		if (art == NULL) art = src;
-		if (art != NULL) {
-			for (int y = 0; y < SCREEN_HEIGHT; y++) {
-				const uint8 *aRow = art + y * SCREEN_WIDTH;
-				uint8 *dstRow = g_topScreenBuffer + (offsetY + y) * TOP_WIDTH + offsetX;
-				for (int x = 0; x < SCREEN_WIDTH; x++) {
-					if (aRow[x] != 0) dstRow[x] = aRow[x];
-				}
-			}
-		}
+		if (art != NULL) BlitDOS320x200ToTop(art, true);
 		return;
 	}
 
@@ -2284,6 +2386,15 @@ void GUI_3DS_RenderTopScreen(void)
 				int crestIdx = (hID == HOUSE_ATREIDES) ? 0 : ((hID == HOUSE_ORDOS) ? 1 : 2);
 				static const char *hNames[3] = {"Atreides", "Ordos", "Harkonnen"};
 				if (s_heraldCrestsValid) {
+#ifdef __NDS__
+					int dstBaseX = 8;
+					int dstBaseY = (TOP_HEIGHT - 64) / 2;
+					for (int cy = 0; cy < 64; cy++) {
+						const uint8 *srcRow = s_heraldCrests[crestIdx] + cy * 84;
+						memcpy(g_topScreenBuffer + (dstBaseY + cy) * TOP_WIDTH + dstBaseX, srcRow, 84);
+						memset(g_topScreenUIMask + (dstBaseY + cy) * TOP_WIDTH + dstBaseX, 0, 84);
+					}
+#else
 					int dstBaseX = 14;
 					int dstBaseY = (TOP_HEIGHT - 64 * 2) / 2; /* 56 */
 					for (int cy = 0; cy < 64; cy++) {
@@ -2306,15 +2417,24 @@ void GUI_3DS_RenderTopScreen(void)
 					if (bottomCoverY < TOP_HEIGHT) {
 						memset(g_topScreenBuffer + bottomCoverY * TOP_WIDTH, 0, (TOP_HEIGHT - bottomCoverY) * TOP_WIDTH);
 					}
+#endif
 				}
+#ifdef __NDS__
+				GUI_3DS_DrawIntroFontText(g_topScreenBuffer, TOP_WIDTH, 100, 62, hNames[crestIdx], 119, 112);
+				char missionLine[64];
+				snprintf(missionLine, sizeof(missionLine), L10N("Mission %u", "Misija %u"), (unsigned)s_saveSlots[slot].mission);
+				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 100, 96, missionLine, 15);
+				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 100, 116, s_saveSlots[slot].dateStr, 110);
+#else
 				GUI_3DS_DrawIntroFontText(g_topScreenBuffer, TOP_WIDTH, 198, 72, hNames[crestIdx], 119, 112);
 				char missionLine[64];
 				snprintf(missionLine, sizeof(missionLine), L10N("Mission %u", "Misija %u"), (unsigned)s_saveSlots[slot].mission);
 				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 198, 108, missionLine, 15);
 				GUI_3DS_DrawText(g_topScreenBuffer, TOP_WIDTH, 198, 128, s_saveSlots[slot].dateStr, 110);
+#endif
 			} else if (slot >= 0 && slot < 5) {
 				const char *emptyStr = L10N("Empty Slot", "Tuščia vieta");
-				Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, TOP_WIDTH / 2, 124, emptyStr, 110, 0);
+				Cairo_DrawText(g_topScreenBuffer, TOP_WIDTH, TOP_WIDTH / 2, TOP_HEIGHT / 2 + 4, emptyStr, 110, 0);
 			}
 			return;
 		}
@@ -2334,7 +2454,7 @@ void GUI_3DS_RenderTopScreen(void)
 				const char *pauseStr = L10N("PAUSED", "PAUZĖ");
 				int pw = GUI_3DS_GetIntroFontWidth(pauseStr);
 				int px = max(0, (TOP_WIDTH - pw) / 2);
-				int py = 104;
+				int py = (TOP_HEIGHT - 20) / 2;
 				GUI_3DS_FillRect(g_topScreenBuffer, TOP_WIDTH, px - 12, py - 6, px + pw + 11, py + 22, 0);
 				GUI_3DS_DrawRect(g_topScreenBuffer, TOP_WIDTH, px - 12, py - 6, px + pw + 11, py + 22, 8);
 				for (int by = py - 6; by <= py + 22; by++) {
@@ -2351,22 +2471,43 @@ void GUI_3DS_RenderTopScreen(void)
 	/* 3. Modal Dialogs (Save/Load Name, Pick House): show centered with black border */
 	if (GUI_3DS_IsDialog() || (g_3dsModalMessageActive && g_gameMode != GM_NORMAL)) {
 		memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
-		if (src != NULL) {
-			int offsetX = (TOP_WIDTH - SCREEN_WIDTH) / 2;   /* 40 */
-			int offsetY = (TOP_HEIGHT - SCREEN_HEIGHT) / 2; /* 20 */
-			for (int y = 0; y < SCREEN_HEIGHT; y++) {
-				memcpy(g_topScreenBuffer + ((offsetY + y) * TOP_WIDTH + offsetX), src + y * SCREEN_WIDTH, SCREEN_WIDTH);
-			}
-		}
+		BlitDOS320x200ToTop(src, false);
 		return;
 	}
 
 	/* 4. IN BATTLE MODE (GM_NORMAL):
-	 * OpenDUNE renders the complete, animated battlefield into SCREEN_0 at X: 0..239, Y: 40..199.
-	 * Fast unrolled 5:3 horizontal and 3:2 vertical scaler (zero divisions per pixel).
-	 */
+	 * OpenDUNE renders the complete, animated battlefield into SCREEN_0 at X: 0..239, Y: 40..199. */
 	s_pauseValid = false;
 	if (src != NULL) {
+#ifdef __NDS__
+		/* Fast unrolled 16:15 horizontal and 6:5 vertical scaler: 240x160 -> 256x192.
+		 * Zero per-block memcpy calls and zero divisions per scanline. */
+		int srcY = 40;
+		int phase = 0;
+		for (int y = 0; y < TOP_HEIGHT; y++) {
+			uint8 *dstRow = g_topScreenBuffer + y * TOP_WIDTH;
+			if (phase == 1) {
+				/* Duplicate previous row (matches srcY = 40 + (y * 5) / 6) */
+				memcpy(dstRow, dstRow - TOP_WIDTH, TOP_WIDTH);
+			} else {
+				const uint8 *s = src + srcY * SCREEN_WIDTH;
+				uint32 *d32 = (uint32 *)dstRow;
+				for (int block = 0; block < 16; block++) {
+					/* 15 source pixels -> 16 destination pixels (duplicate middle pixel s[7]) */
+					uint32 s7 = s[7];
+					d32[0] = (uint32)s[0]  | ((uint32)s[1]  << 8) | ((uint32)s[2]  << 16) | ((uint32)s[3]  << 24);
+					d32[1] = (uint32)s[4]  | ((uint32)s[5]  << 8) | ((uint32)s[6]  << 16) | (s7 << 24);
+					d32[2] = s7            | ((uint32)s[8]  << 8) | ((uint32)s[9]  << 16) | ((uint32)s[10] << 24);
+					d32[3] = (uint32)s[11] | ((uint32)s[12] << 8) | ((uint32)s[13] << 16) | ((uint32)s[14] << 24);
+					s += 15;
+					d32 += 4;
+				}
+				srcY++;
+			}
+			if (++phase == 6) phase = 0;
+		}
+#else
+		/* Fast unrolled 5:3 horizontal and 3:2 vertical scaler (zero divisions per pixel). */
 		int lastSrcY = -1;
 		for (int y = 0; y < TOP_HEIGHT; y++) {
 			int srcY = 40 + (y * 2) / 3;
@@ -2392,6 +2533,7 @@ void GUI_3DS_RenderTopScreen(void)
 				d32 += 5;
 			}
 		}
+#endif
 	} else {
 		memset(g_topScreenBuffer, 0, TOP_WIDTH * TOP_HEIGHT);
 	}
@@ -2438,8 +2580,13 @@ void GUI_3DS_RenderTopScreen(void)
 		int16 cx = g_cursor3DS_X;
 		int16 cy = g_cursor3DS_Y;
 
-		int scrollX = (!g_boxSelectActive) ? ((cx <= 12) ? -1 : ((cx >= TOP_WIDTH - 13) ? 1 : 0)) : 0;
-		int scrollY = (!g_boxSelectActive) ? ((cy <= 12) ? -1 : ((cy >= TOP_HEIGHT - 13) ? 1 : 0)) : 0;
+#ifdef __NDS__
+		const int edgeMargin = 8;
+#else
+		const int edgeMargin = 12;
+#endif
+		int scrollX = (!g_boxSelectActive) ? ((cx <= edgeMargin) ? -1 : ((cx >= TOP_WIDTH - 1 - edgeMargin) ? 1 : 0)) : 0;
+		int scrollY = (!g_boxSelectActive) ? ((cy <= edgeMargin) ? -1 : ((cy >= TOP_HEIGHT - 1 - edgeMargin) ? 1 : 0)) : 0;
 
 		if (scrollX != 0 || scrollY != 0) {
 			GUI_3DS_DrawScrollCursor(g_topScreenBuffer, TOP_WIDTH, cx, cy, scrollX, scrollY);
@@ -2569,7 +2716,7 @@ static void BattlePortrait(int x,int y,int width,int height,uint16 spriteID, int
 	else { dh = height; dw = max(1, artWidth * height / artHeight); }
 	if (dw > 320) return;
 	int left = x + (width - dw) / 2, top = y + (height - dh) / 2;
-	int srcCol[320];
+	static int srcCol[320];
 	for (int col = 0; col < dw; col++) srcCol[col] = trim + col * artWidth / dw;
 	GUI_3DS_FillRect(g_bottomScreenBuffer, 320, x, y, x + width - 1, y + height - 1, TC_FACE);
 	bool cacheable = (width <= 69 && height <= 53 && dw <= 69 && dh <= 53);
