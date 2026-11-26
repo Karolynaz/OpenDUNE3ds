@@ -98,8 +98,27 @@ You need a homebrew-capable **Nintendo 3DS / 2DS** (CFW / Luma3DS) or **Nintendo
 
 ### Nintendo DSi / DSi XL (TWL Mode)
 
-1. **Download `dunedsi.nds`** from the [Releases page](https://github.com/Karolynaz/OpenDUNE3ds/releases/latest) and place it in any folder on your SD card (for example `sd:/roms/nds/dune/dunedsi.nds`).
-2. **Copy your original *Dune II* `.PAK` files** into the **same folder** next to `dunedsi.nds`.
+1. **Download `dunedsi.nds`** from the [Releases page](https://github.com/Karolynaz/OpenDUNE3ds/releases/latest) and place it in a folder on your SD card (for example `sd:/roms/nds/dune/`).
+2. **Copy your original *Dune II* v1.07 `.PAK` files** into the **same folder as `dunedsi.nds`** (or into a `data/` subfolder right next to it):
+   ```text
+   sd:/roms/nds/dune/
+   ├── dunedsi.nds
+   ├── DUNE.PAK
+   ├── ENGLISH.PAK
+   ├── ATRE.PAK
+   ├── HARK.PAK
+   ├── ORDOS.PAK
+   ├── SCENARIO.PAK
+   ├── MENTAT.PAK
+   ├── INTRO.PAK
+   ├── INTROVOC.PAK
+   ├── FINALE.PAK
+   ├── MERC.PAK
+   ├── SOUND.PAK
+   └── VOC.PAK
+   ```
+   - **Alternative supported `.PAK` locations** (probed automatically if not next to `dunedsi.nds`): `./data/`, `sd:/nds/dunedsi/`, `sd:/nds/dunedsi/data/`, `sd:/dunedsi/`, `sd:/dunedsi/data/`, or `sd:/dune2/`.
+   - Game saves (`_SAVE*.DAT`) and settings are stored automatically in the same folder.
    - Music works **100% out of the box** via the built-in 16-bit SoundFont synthesizer — no extra music files are needed.
    - *(Optional)* To show the Dune II cover image in **TWiLightMenu++**, copy `dunedsi.nds.png` from the release into `sd:/_nds/TWiLightMenu/boxart/dunedsi.nds.png`.
 3. **Launch `dunedsi.nds`** via **TWiLightMenu++** (runs natively in DSi TWL mode with 133 MHz CPU & 16 MB RAM).
