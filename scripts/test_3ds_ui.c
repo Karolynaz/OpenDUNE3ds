@@ -6,7 +6,7 @@
 #include "../src/gui/gui_3ds.c"
 
 GameMode g_gameMode;
-GameCfg g_gameConfig = { .cursorSpeed = 2 };
+GameCfg g_gameConfig = { .cursorSpeed = 2, .scrollSpeed = 2 };
 uint16 g_selectionType, g_selectionPosition, g_viewportPosition;
 bool g_debugScenario, g_viewport_forceRedraw;
 Tile g_map[4096];
@@ -19,7 +19,7 @@ int16 g_boxSelectStartX, g_boxSelectStartY, g_boxSelectCurrX, g_boxSelectCurrY;
 Widget *g_widgetLinkedListTail, *g_widgetInvoiceTail;
 WidgetProperties g_widgetProperties[22];
 WindowDesc g_savegameNameWindowDesc;
-Widget g_table_windowWidgets[10];
+Widget g_table_windowWidgets[11];
 FactoryWindowItem g_factoryWindowItems[25];
 uint16 g_factoryWindowBase, g_factoryWindowSelected, g_factoryWindowTotal, g_factoryWindowUpgradeCost;
 bool g_factoryWindowConstructionYard, g_factoryWindowStarport;
@@ -523,12 +523,34 @@ int main(void)
     assert(g_cursor3DS_X==200 && g_cursor3DS_Y==120);
     test_circle.dx=0;test_circle.dy=0;oldX=g_cursor3DS_X;
     for(int i=0;i<10;i++) Input_3DS_Poll();assert(g_cursor3DS_X==oldX && g_cursor3DS_Y==120);
-    /* Holding D-Pad scrolls battle map quickly (~40 tiles/sec after short tap guard). */
+    /* Holding D-Pad scrolls battle map quickly (~40 tiles/sec at Normal) and honors scrollSpeed presets without forceRedraw. */
+    g_viewport_forceRedraw=false;
+    g_gameConfig.scrollSpeed=2;
     g_viewportPosition=Tile_PackXY(10,10); g_cursor3DS_X=200; g_cursor3DS_Y=120;
     test_keys_held=KEY_DRIGHT;
     for(int i=0;i<15;i++) Input_3DS_Poll();
-    assert(Tile_GetPackedX(g_viewportPosition)>=17);
+    int normalPan = Tile_GetPackedX(g_viewportPosition) - 10;
+    assert(normalPan>=7 && !g_viewport_forceRedraw);
     test_keys_held=0; Input_3DS_Poll();
+    g_gameConfig.scrollSpeed=0; g_viewportPosition=Tile_PackXY(10,10); test_keys_held=KEY_DRIGHT;
+    for(int i=0;i<15;i++) Input_3DS_Poll();
+    int slowPan = Tile_GetPackedX(g_viewportPosition) - 10;
+    test_keys_held=0; Input_3DS_Poll();
+    g_gameConfig.scrollSpeed=4; g_viewportPosition=Tile_PackXY(10,10); test_keys_held=KEY_DRIGHT;
+    for(int i=0;i<15;i++) Input_3DS_Poll();
+    int fastPan = Tile_GetPackedX(g_viewportPosition) - 10;
+    assert(slowPan < normalPan && normalPan < fastPan);
+    test_keys_held=0; Input_3DS_Poll();
+    /* Screen-edge scrolling also scales smoothly with scrollSpeed presets. */
+    g_gameConfig.scrollSpeed=0; g_viewportPosition=Tile_PackXY(10,10); g_cursor3DS_X=TOP_WIDTH-1; g_cursor3DS_Y=120;
+    for(int i=0;i<24;i++) Input_3DS_Poll();
+    int slowEdge = Tile_GetPackedX(g_viewportPosition) - 10;
+    g_cursor3DS_X=200; Input_3DS_Poll();
+    g_gameConfig.scrollSpeed=4; g_viewportPosition=Tile_PackXY(10,10); g_cursor3DS_X=TOP_WIDTH-1;
+    for(int i=0;i<24;i++) Input_3DS_Poll();
+    int fastEdge = Tile_GetPackedX(g_viewportPosition) - 10;
+    assert(slowEdge >= 1 && fastEdge > slowEdge * 2);
+    g_gameConfig.scrollSpeed=2; g_cursor3DS_X=200; Input_3DS_Poll();
     /* Second X recalls the existing selection without replacing it by offscreen units. */
     Input_3DS_Init(); g_selectedUnitsCount=1;g_timerGUI=100;
     test_keys_down=KEY_X;Input_3DS_Poll();assert(visibleSelections==1 && recalls==0);

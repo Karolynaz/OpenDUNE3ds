@@ -1270,7 +1270,7 @@ static void GameLoop_Main(void)
 
 		if (g_selectionType == SELECTIONTYPE_TARGET || g_selectionType == SELECTIONTYPE_PLACE || g_selectionType == SELECTIONTYPE_UNIT || g_selectionType == SELECTIONTYPE_STRUCTURE) {
 #ifdef __3DS__
-			if (g_timerGUI != l_lastBattleTick || g_viewport_forceRedraw || key != 0 || l_selectionState != g_selectionState) {
+			if (g_timerGUI != l_lastBattleTick || g_viewport_forceRedraw || g_viewportPosition != g_minimapPosition || key != 0 || l_selectionState != g_selectionState) {
 				l_lastBattleTick = g_timerGUI;
 #endif
 				if (g_unitSelected != NULL) {

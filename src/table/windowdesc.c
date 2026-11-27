@@ -81,7 +81,7 @@ WindowDesc g_gameControlWindowDesc = {
 	/* index       */ 16,
 	/* stringID    */ STR_GAME_CONTROLS,
 	/* addArrows   */ false,
-	/* widgetCount */ 8,
+	/* widgetCount */ 9,
 	{ /* widgets */
 		{ /* 0 */
 		/* stringID      */ -10, /* Music state. */
@@ -95,7 +95,7 @@ WindowDesc g_gameControlWindowDesc = {
 		{ /* 1 */
 		/* stringID      */ -11, /* Sound state. */
 		/* offsetX       */ 152,
-		/* offsetY       */ 32,
+		/* offsetY       */ 30,
 		/* width         */ 80,
 		/* height        */ 12,
 		/* labelStringID */ STR_SOUNDS_ARE,
@@ -104,7 +104,7 @@ WindowDesc g_gameControlWindowDesc = {
 		{ /* 2 */
 		/* stringID      */ -12, /* Game speed. */
 		/* offsetX       */ 152,
-		/* offsetY       */ 46,
+		/* offsetY       */ 42,
 		/* width         */ 80,
 		/* height        */ 12,
 		/* labelStringID */ STR_GAME_SPEED,
@@ -113,31 +113,40 @@ WindowDesc g_gameControlWindowDesc = {
 		{ /* 3 */
 		/* stringID      */ (uint16)-17, /* Cursor speed. */
 		/* offsetX       */ 152,
-		/* offsetY       */ 60,
+		/* offsetY       */ 54,
 		/* width         */ 80,
 		/* height        */ 12,
 		/* labelStringID */ (uint16)-18, /* Cursor speed label */
 		/* shortcut2     */ 0,
 		},
 		{ /* 4 */
+		/* stringID      */ (uint16)-19, /* Scroll speed. */
+		/* offsetX       */ 152,
+		/* offsetY       */ 66,
+		/* width         */ 80,
+		/* height        */ 12,
+		/* labelStringID */ (uint16)-20, /* Scroll speed label */
+		/* shortcut2     */ 0,
+		},
+		{ /* 5 */
 		/* stringID      */ -13, /* Hints state */
 		/* offsetX       */ 152,
-		/* offsetY       */ 74,
+		/* offsetY       */ 78,
 		/* width         */ 80,
 		/* height        */ 12,
 		/* labelStringID */ STR_HINTS_ARE,
 		/* shortcut2     */ 0,
 		},
-		{ /* 5 */
+		{ /* 6 */
 		/* stringID      */ -14, /* Autoscroll state */
 		/* offsetX       */ 152,
-		/* offsetY       */ 88,
+		/* offsetY       */ 90,
 		/* width         */ 80,
 		/* height        */ 12,
 		/* labelStringID */ STR_AUTO_SCROLL_IS,
 		/* shortcut2     */ 0,
 		},
-		{ /* 6 */
+		{ /* 7 */
 		/* stringID      */ (uint16)-15, /* Language state */
 		/* offsetX       */ 152,
 		/* offsetY       */ 102,

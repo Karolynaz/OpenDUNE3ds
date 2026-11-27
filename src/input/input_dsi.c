@@ -36,6 +36,7 @@ static uint16 s_touchX, s_touchY;
 static uint32 s_dpadScrollTimer = 0;
 static int s_dpadScrollAccum = 0;
 static uint32 s_edgeScrollTimer = 0;
+static int s_edgeScrollAccum = 0;
 static int s_menuRepeat = 0;
 static int s_lastDpadDirection, s_lastEdgeDirection, s_lastMenuDirection;
 
@@ -135,6 +136,7 @@ void Input_3DS_Init(void)
 	s_dpadScrollTimer = 0;
 	s_dpadScrollAccum = 0;
 	s_edgeScrollTimer = 0;
+	s_edgeScrollAccum = 0;
 	s_lastDpadDirection = s_lastEdgeDirection = s_lastMenuDirection = 0;
 }
 
@@ -204,7 +206,6 @@ void Input_3DS_Poll(void)
 			g_selectionRectanglePosition = tile;
 			Map_SetSelectionObjectPosition(tile);
 			g_selectionRectangleNeedRepaint = true;
-			g_viewport_forceRedraw = true;
 		}
 	} else {
 		s_cursorFractionX = s_cursorFractionY = 0;
@@ -240,20 +241,36 @@ void Input_3DS_Poll(void)
 
 		int edgeDirection = (edgeDX + 1) * 3 + edgeDY + 1;
 		int dpadDirection = (panDX + 1) * 3 + panDY + 1;
-		if (edgeDirection != s_lastEdgeDirection) s_edgeScrollTimer = 0;
+		if (edgeDirection != s_lastEdgeDirection) { s_edgeScrollTimer = 0; s_edgeScrollAccum = 0; }
 		if (dpadDirection != s_lastDpadDirection) { s_dpadScrollTimer = 0; s_dpadScrollAccum = 0; }
 		s_lastEdgeDirection = edgeDirection;
 		s_lastDpadDirection = dpadDirection;
 
+		/* Time-compensated scroll intervals (in 1/256ths of a 60Hz frame) for scrollSpeed 0..4:
+		 * Slowest / Slow / Normal / Fast / Fastest. */
+		static const int s_edgeStepInterval[5] = { 1536, 1024, 768, 512, 341 };
+		static const int s_panStepInterval[5]  = { 1024,  614, 384, 307, 256 };
+		int scrollIdx = (g_gameConfig.scrollSpeed <= 4) ? (int)g_gameConfig.scrollSpeed : 2;
+
 		int scrollDX = 0, scrollDY = 0;
 		if (edgeDX || edgeDY) {
-			s_edgeScrollTimer++;
-			if (s_edgeScrollTimer == 6 || (s_edgeScrollTimer > 6 && (s_edgeScrollTimer - 6) % 5 == 0)) {
-				scrollDX = edgeDX;
-				scrollDY = edgeDY;
+			int stepInterval = s_edgeStepInterval[scrollIdx];
+			if (s_edgeScrollTimer == 0) {
+				s_edgeScrollTimer = 1;
+				/* Brief ~50ms edge-touch guard, then trigger first tile smoothly */
+				s_edgeScrollAccum = stepInterval - (3 * 256);
+			} else {
+				s_edgeScrollAccum += s_pollScale256;
+				if (s_edgeScrollAccum >= stepInterval) {
+					s_edgeScrollAccum -= stepInterval;
+					if (s_edgeScrollAccum >= stepInterval) s_edgeScrollAccum = stepInterval - 1;
+					scrollDX = edgeDX;
+					scrollDY = edgeDY;
+				}
 			}
 		} else {
 			s_edgeScrollTimer = 0;
+			s_edgeScrollAccum = 0;
 		}
 
 		if (panActive) {
@@ -264,7 +281,7 @@ void Input_3DS_Poll(void)
 				s_dpadScrollTimer = 1;
 				s_dpadScrollAccum = -(3 * 256);
 			} else {
-				const int stepInterval = 384;
+				int stepInterval = s_panStepInterval[scrollIdx];
 				int steps = 0;
 				s_dpadScrollAccum += dt256;
 				while (s_dpadScrollAccum >= stepInterval && steps < 2) {
@@ -290,7 +307,6 @@ void Input_3DS_Poll(void)
 				g_selectionRectanglePosition = tile;
 				Map_SetSelectionObjectPosition(tile);
 				g_selectionRectangleNeedRepaint = true;
-				g_viewport_forceRedraw = true;
 			}
 		}
 	} else if (customMenu) {

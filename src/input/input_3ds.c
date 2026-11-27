@@ -92,6 +92,7 @@ static uint16 s_touchX, s_touchY;
 static uint32 s_dpadScrollTimer = 0;
 static int s_dpadScrollAccum = 0;
 static uint32 s_edgeScrollTimer = 0;
+static int s_edgeScrollAccum = 0;
 static int s_menuRepeat = 0;
 static int s_lastDpadDirection, s_lastEdgeDirection, s_lastMenuDirection;
 
@@ -109,6 +110,7 @@ void Input_3DS_Init(void)
 	s_dpadScrollTimer = 0;
 	s_dpadScrollAccum = 0;
 	s_edgeScrollTimer = 0;
+	s_edgeScrollAccum = 0;
 	s_lastDpadDirection=s_lastEdgeDirection=s_lastMenuDirection=0;
 }
 
@@ -189,7 +191,6 @@ void Input_3DS_Poll(void)
 			g_selectionRectanglePosition = tile;
 			Map_SetSelectionObjectPosition(tile);
 			g_selectionRectangleNeedRepaint = true;
-			g_viewport_forceRedraw = true;
 		}
 	}
 
@@ -224,28 +225,46 @@ void Input_3DS_Poll(void)
         if(dpadActive) edgeDX=edgeDY=0;
         int edgeDirection=(edgeDX+1)*3+edgeDY+1;
         int dpadDirection=(dpadDX+1)*3+dpadDY+1;
-        if(edgeDirection!=s_lastEdgeDirection) s_edgeScrollTimer=0;
+        if(edgeDirection!=s_lastEdgeDirection) { s_edgeScrollTimer=0; s_edgeScrollAccum=0; }
         if(dpadDirection!=s_lastDpadDirection) { s_dpadScrollTimer=0; s_dpadScrollAccum=0; }
         s_lastEdgeDirection=edgeDirection; s_lastDpadDirection=dpadDirection;
+
+        static const int s_edgeStepInterval[5] = { 1536, 1024, 768, 512, 341 };
+        static const int s_panStepInterval[5]  = { 1024,  614, 384, 307, 256 };
+        int scrollIdx = (g_gameConfig.scrollSpeed <= 4) ? (int)g_gameConfig.scrollSpeed : 2;
+        int dt256 = 256;
+#ifdef __3DS__
+        dt256 = s_pollScale256;
+#endif
+
         int scrollDX=0,scrollDY=0;
         if(edgeDX || edgeDY) {
-            s_edgeScrollTimer++;
-            if(s_edgeScrollTimer==8 || (s_edgeScrollTimer>8 && (s_edgeScrollTimer-8)%7==0)) {scrollDX=edgeDX;scrollDY=edgeDY;}
-        } else s_edgeScrollTimer=0;
-        /* 3DS / New 3DS: Circle Pad steers cursor and D-Pad fast-scrolls the map.
-         * (Future Nintendo DSi port without a Circle Pad maps D-Pad to cursor movement using g_gameConfig.cursorSpeed.) */
+            int stepInterval = s_edgeStepInterval[scrollIdx];
+            if (s_edgeScrollTimer == 0) {
+                s_edgeScrollTimer = 1;
+                s_edgeScrollAccum = stepInterval - (4 * 256);
+            } else {
+                s_edgeScrollAccum += dt256;
+                if (s_edgeScrollAccum >= stepInterval) {
+                    s_edgeScrollAccum -= stepInterval;
+                    if (s_edgeScrollAccum >= stepInterval) s_edgeScrollAccum = stepInterval - 1;
+                    scrollDX = edgeDX;
+                    scrollDY = edgeDY;
+                }
+            }
+        } else {
+            s_edgeScrollTimer = 0;
+            s_edgeScrollAccum = 0;
+        }
+        /* 3DS / New 3DS: Circle Pad steers cursor and D-Pad fast-scrolls the map. */
         if (dpadActive) {
-            int dt256 = 256;
-#ifdef __3DS__
-            dt256 = s_pollScale256;
-#endif
             if (s_dpadScrollTimer == 0) {
                 scrollDX = dpadDX;
                 scrollDY = dpadDY;
                 s_dpadScrollTimer = 1;
                 s_dpadScrollAccum = -(3 * 256);
             } else {
-                const int stepInterval = 384; /* ~40 tiles/sec at 60Hz */
+                int stepInterval = s_panStepInterval[scrollIdx];
                 int steps = 0;
                 s_dpadScrollAccum += dt256;
                 while (s_dpadScrollAccum >= stepInterval && steps < 2) {
@@ -271,7 +290,6 @@ void Input_3DS_Poll(void)
 				g_selectionRectanglePosition = tile;
 				Map_SetSelectionObjectPosition(tile);
 				g_selectionRectangleNeedRepaint = true;
-				g_viewport_forceRedraw = true;
 			}
 		}
 	} else if (customMenu) {

@@ -483,7 +483,6 @@ void GUI_3DS_CenterCameraOnTile(uint16 tileX, uint16 tileY)
 	cy = clamp(cy, (int16)mapInfo->minY, maxY);
 
 	g_viewportPosition = Tile_PackXY((uint16)cx, (uint16)cy);
-	g_viewport_forceRedraw = true;
 }
 
 void GUI_3DS_ScrollCamera(int16 dx, int16 dy)
@@ -504,7 +503,6 @@ void GUI_3DS_ScrollCamera(int16 dx, int16 dy)
 
 	if (cx != curX || cy != curY) {
 		g_viewportPosition = Tile_PackXY((uint16)cx, (uint16)cy);
-		g_viewport_forceRedraw = true;
 	}
 }
 
@@ -977,7 +975,7 @@ static void DialogMetrics(int count, int *outHeadingY, int *outHeadingCount, cha
                           int *outBtnX, int *outBtnW, int *outY0, int *outStep, int *outRows)
 {
 	int step = 27, rows = 6;
-	if (s_dialogWindow == &g_gameControlWindowDesc) { step = 25; rows = 8; }
+	if (s_dialogWindow == &g_gameControlWindowDesc) { step = 23; rows = 9; }
 	else if (s_dialogWindow == &g_optionsWindowDesc) { step = 27; rows = 7; }
 	else if (count <= 2) { step = 34; rows = 6; }
 
@@ -3352,7 +3350,9 @@ void GUI_3DS_RenderBottomScreen(void)
 		static uint32 s_radarCacheTick = 0xFFFFFFFF;
 		static uint8 s_radarCacheHouse = 0xFF;
 		bool radarDirty = true;
-#ifdef __3DS__
+#ifdef __NDS__
+		radarDirty = ((g_timerGame - s_radarCacheTick) >= 6 || s_radarCacheTick == 0xFFFFFFFF || g_viewport_forceRedraw || g_playerHouseID != s_radarCacheHouse);
+#elif defined(__3DS__)
 		radarDirty = ((g_timerGame - s_radarCacheTick) >= 3 || s_radarCacheTick == 0xFFFFFFFF || g_viewport_forceRedraw || g_playerHouseID != s_radarCacheHouse);
 #endif
 		if (radarDirty) {
@@ -3455,7 +3455,6 @@ void GUI_3DS_HandleBottomTouchHold(int16 touchX, int16 touchY)
 			g_selectionRectanglePosition = tile;
 			Map_SetSelectionObjectPosition(tile);
 			g_selectionRectangleNeedRepaint = true;
-			g_viewport_forceRedraw = true;
 		}
 	}
 }
@@ -3646,7 +3645,6 @@ void GUI_3DS_HandleBottomTouch(int16 touchX, int16 touchY)
 			g_selectionRectanglePosition = tile;
 			Map_SetSelectionObjectPosition(tile);
 			g_selectionRectangleNeedRepaint = true;
-			g_viewport_forceRedraw = true;
 		}
 		Sound_StartSound(3);
 		return;

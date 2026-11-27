@@ -6,7 +6,7 @@
 #include "../gui/widget.h"
 #include "strings.h"
 
-Widget g_table_windowWidgets[10] = {
+Widget g_table_windowWidgets[11] = {
 	{ /* 0 */
 		/* next                  */ NULL,
 		/* index                 */ 30,
@@ -400,6 +400,55 @@ Widget g_table_windowWidgets[10] = {
 		/* stringID              */ STR_NULL,
 	},
 	{ /* 8 */
+		/* next                  */ NULL,
+		/* index                 */ 38,
+		/* shortcut              */ 0,
+		/* shortcut2             */ 0,
+		/* drawModeNormal        */ 1,
+		/* drawModeSelected      */ 1,
+		/* drawModeDown          */ 1,
+		{ /* flags */
+		/* requiresClick         */ true,
+		/* notused1              */ true,
+		/* clickAsHover          */ false,
+		/* invisible             */ false,
+		/* greyWhenInvisible     */ false,
+		/* noClickCascade        */ false,
+		/* loseSelect            */ true,
+		/* notused2              */ false,
+		/* buttonFilterLeft      */ 4,
+		/* buttonFilterRight     */ 4
+		},
+		/* drawProcNormal        */ { 0x0 },
+		/* drawProcSelected      */ { 0x0 },
+		/* drawProcDown          */ { 0x0 },
+		/* parentID              */ 0,
+		/* offsetX               */ 0,
+		/* offsetY               */ 0,
+		/* width                 */ 0,
+		/* height                */ 0,
+		/* fgColourNormal        */ 15,
+		/* bgColourNormal        */ 12,
+		/* fgColourSelected      */ 15,
+		/* bgColourSelected      */ 12,
+		/* fgColourDown          */ 15,
+		/* bgColourDown          */ 12,
+		{ /* state */
+		/* selected              */ false,
+		/* hover1                */ false,
+		/* hover2                */ false,
+		/* selectedLast          */ false,
+		/* hover1Last            */ false,
+		/* hover2Last            */ false,
+		/* notused               */ false,
+		/* keySelected           */ false,
+		/* buttonState           */ 0,
+		},
+		/* clickProc             */ NULL,
+		/* data                  */ NULL,
+		/* stringID              */ STR_NULL,
+	},
+	{ /* 9 (Save/Load up arrow) */
 		/* next                  */ NULL,
 		/* index                 */ 38,
 		/* shortcut              */ 96,

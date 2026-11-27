@@ -32,6 +32,7 @@ typedef struct GameCfg {
 	uint16 hints;                      /*!< 0:Off, 1:On. */
 	uint16 autoScroll;                 /*!< 0:Off, 1:On. */
 	uint16 cursorSpeed;                /*!< 0:Slowest, 1:Slow, 2:Normal, 3:Fast, 4:Fastest. */
+	uint16 scrollSpeed;                /*!< 0:Slowest, 1:Slow, 2:Normal, 3:Fast, 4:Fastest. */
 } GameCfg;
 
 extern GameCfg g_gameConfig;

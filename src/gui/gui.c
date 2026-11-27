@@ -3147,6 +3147,21 @@ char *GUI_String_Get_ByIndex(int16 stringID)
 		case -18:
 			return (g_config.language == LANGUAGE_LITHUANIAN) ? "Kursoriaus greitis" : "Cursor Speed";
 
+		case -19: {
+			static const uint16 scrollSpeedStrings[] = {
+				STR_SLOWEST,
+				STR_SLOW,
+				STR_NORMAL,
+				STR_FAST,
+				STR_FASTEST
+			};
+			uint16 ss = (g_gameConfig.scrollSpeed <= 4) ? g_gameConfig.scrollSpeed : 2;
+			stringID = scrollSpeedStrings[ss];
+		} break;
+
+		case -20:
+			return (g_config.language == LANGUAGE_LITHUANIAN) ? "Slinkimo greitis" : "Scroll Speed";
+
 		default: break;
 	}
 
@@ -4925,13 +4940,15 @@ void GUI_DrawScreen(Screen screenID)
 	if (hasScrolled) {
 		Map_SetSelectionObjectPosition(0xFFFF);
 
-		for (xpos = 0; xpos < 14; xpos++) {
-			uint16 v = g_minimapPosition + xpos + 6*64;
+		if (g_viewportMessageCounter != 0) {
+			for (xpos = 0; xpos < 14; xpos++) {
+				uint16 v = g_minimapPosition + xpos + 6*64;
 
-			BitArray_Set(g_dirtyViewport, v);
-			BitArray_Set(g_dirtyMinimap, v);
+				BitArray_Set(g_dirtyViewport, v);
+				BitArray_Set(g_dirtyMinimap, v);
 
-			g_dirtyViewportCount++;
+				g_dirtyViewportCount++;
+			}
 		}
 	}
 
